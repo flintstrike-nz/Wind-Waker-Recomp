@@ -50,6 +50,12 @@ class DolphinSaveImport(
     private val resultPrefix get() = paths.card.name + ".import-"
     private var counter = 0
 
+    // An import whose screen is gone must not commit: the card may belong to a newer screen or the game by
+    // then. The flag is set and tested under the same lock the swap runs under, so an import either
+    // commits completely before [cancel] returns or never does.
+    private val commitLock = Any()
+    private var cancelled = false
+
     private fun newStaged(): File = File(stagedDir, "$owner-${synchronized(this) { counter++ }}.tmp")
     private fun resultFor(staged: File) = File(paths.card.parentFile, resultPrefix + staged.name)
 
@@ -94,11 +100,15 @@ class DolphinSaveImport(
     fun import(inspection: Inspection, src: Int, dst: Int): String? {
         val result = resultFor(inspection.file)
         try {
+            if (cancelled) return "The import was cancelled."
             DiscNative.nativeDolphinImport(inspection.file.absolutePath, paths.card.absolutePath, src, dst,
                 result.absolutePath)?.let { return it }
             // The result must be a sound container before it replaces anything.
             DiscNative.nativeCardCheck(result.absolutePath)?.let { return it }
-            return saves.swapIn(result)
+            synchronized(commitLock) {
+                if (cancelled) return "The import was cancelled."
+                return saves.swapIn(result)
+            }
         } finally {
             result.delete()
             discard(inspection)
@@ -107,6 +117,12 @@ class DolphinSaveImport(
 
     fun discard(inspection: Inspection) {
         inspection.file.delete()
+    }
+
+    /** The screen is going away: no import of this object commits from here on, and its files are removed. */
+    fun cancel() {
+        synchronized(commitLock) { cancelled = true }
+        discardOwn()
     }
 
     /**

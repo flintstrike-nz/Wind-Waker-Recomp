@@ -358,7 +358,9 @@ tree_state() {  # the content of the tracked files under the given paths, as the
                 # same whether or not they are committed, and not the commit itself (an unrelated
                 # commit must not force a rebuild)
     git ls-files -z -- "$@" | while IFS= read -r -d '' file; do
-        if [ -f "$file" ]; then printf '%s  %s\n' "$(sha256_of "$file")" "$file"; else printf 'missing  %s\n' "$file"; fi
+        # a file deleted on disk but still tracked is skipped, so committing the deletion changes nothing
+        [ -f "$file" ] && printf '%s  %s\n' "$(sha256_of "$file")" "$file"
+        true
     done | shasum -a 256 | awk '{print $1}'
 }
 patches_sha=$(cat "$root"/patches/android/recompcore/*.patch | shasum -a 256 | awk '{print $1}')

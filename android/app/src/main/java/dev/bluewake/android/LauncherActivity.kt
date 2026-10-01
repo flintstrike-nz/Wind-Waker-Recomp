@@ -149,9 +149,9 @@ class LauncherActivity : ComponentActivity() {
         pendingInspection?.let { dolphin.discard(it) }
         ui.removeCallbacksAndMessages(null)
         worker.shutdownNow()
-        // Whatever the handoff between the worker and the UI dropped (an inspection read but never
-        // shown, an import queued but never started) is in the cache under one name.
-        dolphin.discardOwn()
+        // An import still running must not commit to a card that is no longer this screen's to change,
+        // and whatever the handoff dropped (an inspection never shown, an import never started) goes.
+        dolphin.cancel()
         super.onDestroy()
     }
 
@@ -289,9 +289,9 @@ class LauncherActivity : ComponentActivity() {
 
     /** Reads the picked .gci or raw card off the main thread, then asks which quest log to take. */
     private fun beginDolphinImport(uri: Uri) {
-        val name = displayName(uri)
         runBusy("Reading the save…") {
             try {
+                val name = displayName(uri)  // a document provider can be slow: not on the main thread
                 val inspection = dolphin.inspect(uri, name)
                 Runnable { chooseQuestLog(inspection) }
             } catch (e: IOException) {
