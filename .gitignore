@@ -47,3 +47,15 @@ cmake-build-*/
 .vscode/
 *.swp
 *~
+
+# Android
+*.apk
+*.aab
+*.keystore
+*.jks
+*.keystore.password
+android/.gradle/
+android/build/
+android/app/build/
+android/app/libs/
+android/local.properties

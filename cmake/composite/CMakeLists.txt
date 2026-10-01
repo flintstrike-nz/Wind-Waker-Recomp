@@ -74,6 +74,15 @@ target_include_directories(${MODULE_NAME} PRIVATE "${COMPOSITE_DIR}" "${GXRUNTIM
 if(APPLE)
   set_target_properties(${MODULE_NAME} PROPERTIES SUFFIX ".dylib")
 endif()
+if(ANDROID)
+  # An APK carries native libraries only as lib*.so; the app finds this one in
+  # its nativeLibraryDir (android/app) and the host dlopens it from there.
+  set_target_properties(${MODULE_NAME} PROPERTIES PREFIX "lib")
+  # The module carries its own copy of the CPU runtime (cpu.c and friends) next
+  # to the host's: bind its references to its own definitions, as macOS's
+  # two-level namespace does, whatever the host exports.
+  target_link_options(${MODULE_NAME} PRIVATE -Wl,-Bsymbolic -Wl,-z,max-page-size=16384)
+endif()
 target_link_libraries(${MODULE_NAME} PRIVATE m)
 target_compile_options(${MODULE_NAME} PRIVATE -O${COMPOSITE_OPTIMIZATION_LEVEL} -ffp-contract=off)
 

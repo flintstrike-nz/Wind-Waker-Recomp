@@ -17,9 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#endif
+#include "touch_platform.h"
 
 // The game's camera (GZLE01): dComIfGp_getCamera(0), the camera_process_class
 // in g_dComIfG_gameInfo.play.mCameraInfo[0]. Its view (view_class) is at +0,
@@ -269,8 +267,8 @@ static void observe(const void* sdl_event, void* user) {
 }
 
 void bluewake_mouse_camera_install(void) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
-    // An iPad's touches arrive as mouse events too; its controls are on screen.
+#if BLUEWAKE_TOUCH_PLATFORM
+    // A tablet's or phone's touches arrive as mouse events too; its controls are on screen.
     return;
 #else
     // Installed even with the mouse camera off: the options menu and the
@@ -298,7 +296,7 @@ static bool env_is(const char* name, char value) {
 }
 
 static void read_stick_settings(void) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if BLUEWAKE_TOUCH_PLATFORM
     // Not tried with the touch controls yet: off unless asked for.
     g_stick_on = env_is("BLUEWAKE_STICK_CAMERA", '1');
 #else
@@ -317,7 +315,7 @@ static void read_stick_settings(void) {
 }
 
 void bluewake_mouse_camera_reload(void) {
-#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
+#if !BLUEWAKE_TOUCH_PLATFORM
     const char* on = getenv("BLUEWAKE_MOUSE_CAMERA");
     g_enabled = on == NULL || on[0] != '0';
     if (!g_enabled)

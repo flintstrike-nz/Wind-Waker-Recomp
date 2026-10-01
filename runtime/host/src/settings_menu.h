@@ -3,9 +3,7 @@
 
 #include <stdbool.h>
 
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#endif
+#include "touch_platform.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,8 +19,8 @@ extern "C" {
 //                                 Application Support/Wind Waker Recomp/
 //                                 settings.ini); none: neither read nor written
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
-// The iOS app has its own menu.
+#if BLUEWAKE_TOUCH_PLATFORM
+// The iOS and Android apps have their own menu.
 static inline void bluewake_settings_load(void) {}
 static inline void bluewake_settings_menu_install(void) {}
 static inline bool bluewake_settings_menu_event(const void* sdl_event) {

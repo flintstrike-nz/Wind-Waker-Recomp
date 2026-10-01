@@ -16,6 +16,7 @@ credits are preserved below and in [RIGHTS_AND_LICENSES.md](RIGHTS_AND_LICENSES.
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows">
   <img alt="macOS Apple Silicon" src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple">
   <img alt="iPhone and iPad" src="https://img.shields.io/badge/iPhone%20%2F%20iPad-build%20your%20own-0A84FF?logo=apple">
+  <img alt="Android arm64, untested on a device" src="https://img.shields.io/badge/Android-build%20your%20own%20(untested)-3DDC84?logo=android&amp;logoColor=white">
   <img alt="Direct3D 12 and Metal" src="https://img.shields.io/badge/renderer-Direct3D%2012%20%7C%20Metal-5E5CE6">
   <img alt="Smooth Motion 60 or 120 FPS" src="https://img.shields.io/badge/Smooth%20Motion-60%20%7C%20120%20FPS-30D158">
   <img alt="Ahead-of-time static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A">
@@ -39,6 +40,10 @@ credits are preserved below and in [RIGHTS_AND_LICENSES.md](RIGHTS_AND_LICENSES.
 > **iPhone and iPad: build your own.** No prebuilt IPA is provided. You build it on a Mac from your disc
 > and install it on your own device; see [iPhone and iPad](#iphone-and-ipad).
 >
+> **Android: build your own, not yet run on a device.** An arm64 Android port (aimed at the Oppo Find N3's
+> main screen) builds and packages an APK from your disc on a Mac or Linux PC, but has not been played on
+> hardware yet; see [Android](#android).
+>
 > **AI disclosure:** Wind Waker Recomp is developed with substantial AI assistance for code, testing,
 > documentation and debugging. The status log records what has actually been checked, and on what.
 
@@ -46,7 +51,7 @@ credits are preserved below and in [RIGHTS_AND_LICENSES.md](RIGHTS_AND_LICENSES.
 [open an issue](https://github.com/elliotttate/Wind-Waker-Recomp/issues).
 
 [Features](#features) · [Controls](#controls) · [Windows](#windows) · [Mac](#mac) ·
-[iPhone and iPad](#iphone-and-ipad) · [Performance](#performance) · [Mods](#mods) ·
+[iPhone and iPad](#iphone-and-ipad) · [Android](#android) · [Performance](#performance) · [Mods](#mods) ·
 [Known issues](#known-issues) · [FAQ](#frequently-asked-questions)
 
 ## What is it?
@@ -206,6 +211,28 @@ On iPhone and iPad, **⋯ › Mods** has widescreen, HD texture packs and Better
 on a Mac, then **Install Better Wind Waker…**); saves are in **On My iPad › BlueWake › BlueWake ›
 GZLE01.card**, and **⋯ › Game Data & Saves** backs them up, restores them and imports Dolphin saves.
 
+## Android
+
+An arm64 Android app (Android 10 or newer, Vulkan 1.1), built from your own disc like the iPhone and iPad
+one and aimed first at the **Oppo Find N3's inner screen**: on that nearly square display the 4:3 picture
+fills the width and the on-screen controls go in the strip below it, with the picture on the upper half and
+the controls on the lower half in Flex mode, and the 120 Hz display asked for. **Status: it builds and the
+APK packages and signs, but it has not been run on a device**, so nothing here is a measurement and it
+carries no optimization profile yet. You need:
+
+- a Mac or Linux PC with CMake, Ninja, Python 3, clang, a JDK 17+ and the Android SDK with NDK r27, and
+  25 GB of free disk space
+- your `GZLE01` revision 0 disc image (`.iso`)
+
+~~~bash
+scripts/android/build_device.sh "/path/to/The Legend Of Zelda The Wind Waker.iso" --apk build/BlueWake.apk
+~~~
+
+Install the APK with `adb install -r` (or open it on the device), then choose your disc image in the app's
+first screen; it is copied into the app's private storage and checked. The APK you build contains code
+translated from your disc: keep it for your own devices. Everything, including what to check first on a
+device, is in [docs/ANDROID.md](docs/ANDROID.md).
+
 ## Performance
 
 | Device | Result |
@@ -215,6 +242,7 @@ GZLE01.card**, and **⋯ › Game Data & Saves** backs them up, restores them an
 | Mac (Apple Silicon) | Smooth Motion at 60 or 120; the busiest scenes can dip below 120 at 120 Hz, 60 is steadier |
 | iPad Pro 12.9" (M2) | Steady 30 FPS at full speed; a 44-minute session had 14 seconds below 29 FPS, all brief dips at area loads |
 | iPhone 14 (A15) | 30 FPS in most play; dips to about 25-27 FPS in the busiest scenes and the title-screen flyover |
+| Android (Oppo Find N3, Snapdragon 8 Gen 2) | Not yet run on a device |
 | Older devices | An A13 or newer is required on iOS, an AVX2 CPU on Windows; other slower machines have not been measured |
 
 Builds are compiled with an optimization profile: a record of which parts of
@@ -331,6 +359,7 @@ saves only.
   [Windows](https://github.com/elliotttate/Wind-Waker-Recomp/blob/windows-release/docs/WINDOWS.md): installing, playing and building
 - [Performance optimizations](docs/PERFORMANCE_OPTIMIZATIONS.md): every speed-up, what it measured, and how to turn it off
 - [Build your own BlueWake](docs/BUILD_YOUR_OWN.md): the iPhone and iPad guide
+- [Android](docs/ANDROID.md): building, installing and what to check first on a device
 - [The Builder](docs/BUILDER.md): how the build works, and reusing it for other ports
 - [Device build](docs/status/DEVICE_BUILD.md): signing, installing and build options
 - [Mods](docs/MODS.md): the mods and how code mods are built

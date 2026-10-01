@@ -15,4 +15,6 @@ A release must never include:
 
 Give each release a record of what it was built from (source revision, pinned dependencies,
 checksums), the licenses and third-party notices, and install notes. `scripts/ios/build_device.sh
-DISC.iso --ipa OUT.ipa` remains the way to build a personal iPad app from a disc.
+DISC.iso --ipa OUT.ipa` remains the way to build a personal iPad app from a disc, and
+`scripts/android/build_device.sh DISC.iso --apk OUT.apk` the way to build a personal Android app (an APK
+carries the translated game module `libgGZLE01_recomp.so`, so the rules above apply to it equally).
