@@ -108,7 +108,9 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
         var n = 1
         while (!backup.createNewFile()) backup = File(paths.backups, "$stem-${n++}.card")
         try {
-            paths.card.copyTo(backup, overwrite = true)
+            // Through streams into the reserved file: File.copyTo(overwrite = true) unlinks the destination
+            // first, which would give the name up for another operation to reserve.
+            paths.card.inputStream().use { input -> backup.outputStream().use { input.copyTo(it) } }
         } catch (e: IOException) {
             backup.delete()
             throw e
