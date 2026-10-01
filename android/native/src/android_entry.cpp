@@ -26,6 +26,7 @@
 
 #include <android/log.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -76,6 +77,9 @@ void* log_pump(void* arg) {
     std::string line;
     for (;;) {
         const ssize_t n = read(read_fd, buffer, sizeof buffer);
+        // An interrupted read is not the end of the pipe: stopping here would leave the host's
+        // next write to a pipe nobody reads (SIGPIPE).
+        if (n < 0 && errno == EINTR) continue;
         if (n <= 0) break;
         for (ssize_t i = 0; i < n; i++) {
             if (line.size() < 8191) line.push_back(buffer[i]);

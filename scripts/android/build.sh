@@ -350,6 +350,28 @@ toolchain=(-DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" -DA
     -DANDROID_PLATFORM=android-29 -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release)
 module_name=libgGZLE01_recomp.so
 
+# What each built library was made from, recorded beside it and checked again when packaging, so
+# --start-at apk can never package libraries made from other inputs than the ones the provenance
+# describes.
+profile_hash() { if [ -n "$1" ]; then sha256_of "$1"; else echo none; fi; }
+tree_state() {  # the commit plus any uncommitted change under the given paths
+    { git rev-parse HEAD; git diff HEAD -- "$@"; } | shasum -a 256 | awk '{print $1}'
+}
+patches_sha=$(cat "$root"/patches/android/recompcore/*.patch | shasum -a 256 | awk '{print $1}')
+composite_inputs() {
+    printf '%s\n' "ndk=${ndk_revision:-unknown}" "cpu=$cpu_flags" "opt=$opt_level" "mods=$mods" \
+        "recompcore=$RECOMPCORE_SHA" "patches=$patches_sha" \
+        "composite_digest=$(cat "$out/composite-final.digest" 2>/dev/null || cat "$out/composite-src.digest" 2>/dev/null || echo none)" \
+        "profile=$(profile_hash "$composite_pgo")" \
+        "source=$(tree_state cmake/composite scripts/generate_composite.py scripts/mods mods)"
+}
+host_inputs() {
+    printf '%s\n' "ndk=${ndk_revision:-unknown}" "cpu=$cpu_flags" \
+        "recompcore=$RECOMPCORE_SHA" "dawn=$DAWN_ANDROID_SHA256" "patches=$patches_sha" \
+        "profile=$(profile_hash "$host_pgo")" \
+        "source=$(tree_state android/native runtime/host/src apple/ios/src)"
+}
+
 if should_run composite; then
     step "7/9 compile the game module (-O$opt_level, $cpu_flags; this is the long step)"
     flags=$cpu_flags
@@ -366,6 +388,7 @@ if should_run composite; then
         -DABI_DIR="$recompcore/Source/Core/Core/PowerPC/StaticRecomp"
     run composite-build cmake --build "$out/composite-android" -j "$jobs"
     [ -f "$out/composite-android/$module_name" ] || die "the game module was not produced"
+    composite_inputs > "$out/composite-android/inputs.txt"
     echo "game module built in $(( ($(date +%s) - start) / 60 )) min: $out/composite-android/$module_name"
 fi
 
@@ -386,6 +409,7 @@ if should_run host; then
         "-DCMAKE_C_FLAGS=$host_flags" "-DCMAKE_CXX_FLAGS=$host_flags" \
         ${cmake_args[@]+"${cmake_args[@]}"}
     run host-build cmake --build "$out/host-android" --target main bwdisc -j "$jobs"
+    host_inputs > "$out/host-android/inputs.txt"
 fi
 for f in "$out/host-android/libmain.so" "$out/host-android/libbwdisc.so" "$out/composite-android/$module_name"; do
     [ -f "$f" ] || die "missing $f (rerun without --start-at)"
@@ -395,6 +419,10 @@ done
 
 if should_run apk; then
     step "9/9 package and sign the APK"
+    [ "$(composite_inputs)" = "$(cat "$out/composite-android/inputs.txt" 2>/dev/null || true)" ] ||
+        die "the game module in $out was built from other inputs than this invocation's (a different commit, --cpu, mods, profile or toolchain): rerun with --start-at composite"
+    [ "$(host_inputs)" = "$(cat "$out/host-android/inputs.txt" 2>/dev/null || true)" ] ||
+        die "the host libraries in $out were built from other inputs than this invocation's (a different commit, --cpu, profile or toolchain): rerun with --start-at host"
     # Native libraries for Gradle: stripped for the APK, the unstripped ones kept for crash reports.
     jni=$out/jniLibs/arm64-v8a
     rm -rf "$out/jniLibs" "$out/symbols"
@@ -417,7 +445,7 @@ if should_run apk; then
   "recompcore": "$RECOMPCORE_SHA",
   "dolrecomp": "$DOLRECOMP_SHA",
   "dawn_package_sha256": "$DAWN_ANDROID_SHA256",
-  "android_patches_sha256": "$(cat "$root"/patches/android/recompcore/*.patch | shasum -a 256 | awk '{print $1}')",
+  "android_patches_sha256": "$patches_sha",
   "ndk": "${ndk_revision:-unknown}",
   "ndk_override": $ndk_override,
   "build_tools": "$BUILD_TOOLS_VERSION",
@@ -430,8 +458,8 @@ if should_run apk; then
   "composite_digest": "$(cat "$out/composite-src.digest" 2>/dev/null || true)",
   "mods": $([ "$mods" -eq 1 ] && echo true || echo false),
   "cpu_flags": "$cpu_flags",
-  "game_module_profile_sha256": "$([ -n "$composite_pgo" ] && sha256_of "$composite_pgo" || echo none)",
-  "host_profile_sha256": "$([ -n "$host_pgo" ] && sha256_of "$host_pgo" || echo none)",
+  "game_module_profile_sha256": "$(profile_hash "$composite_pgo")",
+  "host_profile_sha256": "$(profile_hash "$host_pgo")",
   "module_sha256": "$(sha256_of "$jni/$module_name")",
   "host_sha256": "$(sha256_of "$jni/libmain.so")",
   "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -469,7 +497,8 @@ EOF
     # Audit: the APK holds the app and the translated module, never the disc,
     # saves or signing material.
     listing=$(unzip -Z1 "$built_apk")
-    bad=$(printf '%s\n' "$listing" | grep -i -E '\.(iso|gcm|rvz|wbfs|wia|ciso|gcz|nfs|dol|rel|card|gci|sav|raw|p12|jks|keystore)$' || true)
+    # The same private-file types scripts/audit_repo.sh keeps out of the repository.
+    bad=$(printf '%s\n' "$listing" | grep -i -E '(\.(iso|gcm|rvz|nfs|wbfs|wia|ciso|gcz|dol|rel|sav|gci|card|raw|p12|mobileprovision|provisionprofile|ipa|apk|aab|keystore|password|jks|profraw|profdata|dylib)|(^|/)dolphin_[^/]*\.bin)$' || true)
     [ -z "$bad" ] || die "refusing to package private files: $bad"
     printf '%s\n' "$listing" | grep -qx "lib/arm64-v8a/$module_name" || die "the APK has no $module_name"
     printf '%s\n' "$listing" | grep -qx "lib/arm64-v8a/libmain.so" || die "the APK has no libmain.so"
