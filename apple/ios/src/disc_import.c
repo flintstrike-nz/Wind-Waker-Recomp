@@ -1,7 +1,9 @@
 // See disc_import.h.
 #include "disc_import.h"
 
+#if defined(__APPLE__)
 #include <CommonCrypto/CommonDigest.h>
+#endif
 #include <dirent.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -93,6 +95,7 @@ bad:
     return NULL;
 }
 
+#if defined(__APPLE__)
 static void sha1_hex(const uint8_t* data, size_t size, char out[41]) {
     uint8_t digest[CC_SHA1_DIGEST_LENGTH];
 #pragma clang diagnostic push
@@ -102,6 +105,51 @@ static void sha1_hex(const uint8_t* data, size_t size, char out[41]) {
     for (int i = 0; i < CC_SHA1_DIGEST_LENGTH; ++i)
         snprintf(out + i * 2, 3, "%02x", digest[i]);
 }
+#else
+// SHA-1 (FIPS 180-4) where CommonCrypto is not available (Android, and the
+// Linux host that builds the translated game). Only used to recognize the
+// disc's main.dol, not for security.
+static uint32_t sha1_rotl(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
+
+static void sha1_block(uint32_t h[5], const uint8_t* p) {
+    uint32_t w[80];
+    for (int i = 0; i < 16; ++i)
+        w[i] = be32(p + i * 4);
+    for (int i = 16; i < 80; ++i)
+        w[i] = sha1_rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+    uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+    for (int i = 0; i < 80; ++i) {
+        uint32_t f, k;
+        if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999u; }
+        else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1u; }
+        else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
+        else { f = b ^ c ^ d; k = 0xCA62C1D6u; }
+        const uint32_t t = sha1_rotl(a, 5) + f + e + k + w[i];
+        e = d; d = c; c = sha1_rotl(b, 30); b = a; a = t;
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+}
+
+static void sha1_hex(const uint8_t* data, size_t size, char out[41]) {
+    uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
+    size_t i = 0;
+    for (; i + 64 <= size; i += 64)
+        sha1_block(h, data + i);
+    uint8_t tail[128] = {0};
+    const size_t rest = size - i;
+    memcpy(tail, data + i, rest);
+    tail[rest] = 0x80;
+    const size_t tail_len = rest < 56 ? 64 : 128;
+    const uint64_t bits = (uint64_t)size * 8u;
+    for (int j = 0; j < 8; ++j)
+        tail[tail_len - 1 - j] = (uint8_t)(bits >> (8 * j));
+    sha1_block(h, tail);
+    if (tail_len == 128)
+        sha1_block(h, tail + 64);
+    for (int j = 0; j < 5; ++j)
+        snprintf(out + j * 8, 9, "%08x", h[j]);
+}
+#endif
 
 static int write_file(const char* path, const uint8_t* data, size_t size) {
     FILE* f = fopen(path, "wb");

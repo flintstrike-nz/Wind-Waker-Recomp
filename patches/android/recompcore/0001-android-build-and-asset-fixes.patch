@@ -1,0 +1,76 @@
+diff --git a/GXRuntime/backends/aurora/aurora_graphics.cpp b/GXRuntime/backends/aurora/aurora_graphics.cpp
+index 4624f00..f0ab574 100644
+--- a/GXRuntime/backends/aurora/aurora_graphics.cpp
++++ b/GXRuntime/backends/aurora/aurora_graphics.cpp
+@@ -22,7 +22,9 @@
+ #include <thread>
+ #include <vector>
+ #if !defined(_WIN32)
++#if !defined(__ANDROID__)
+ #include <execinfo.h>
++#endif
+ #include <pthread.h>
+ #include <signal.h>
+ #include <unistd.h>
+@@ -500,6 +502,7 @@ std::atomic<long long> g_batch_start_ns{0};
+ #if !defined(_WIN32)
+ std::atomic<pthread_t> g_fifo_pthread{};
+ 
++#if !defined(__ANDROID__)
+ void stall_stack_handler(int) {
+     void* frames[48];
+     const int n = backtrace(frames, 48);
+@@ -509,6 +512,7 @@ void stall_stack_handler(int) {
+     static const char kFooter[] = "[gx-stall-stack] end\n";
+     (void)!write(2, kFooter, sizeof kFooter - 1);
+ }
++#endif  // !__ANDROID__
+ 
+ #endif
+ 
+@@ -518,9 +522,9 @@ long long monotonic_ns() {
+         .count();
+ }
+ 
+-#if defined(_WIN32)
+-// Windows has no backtrace() or thread signals: DOL_GX_STALL_STACKS is a
+-// Mac and Linux diagnostic.
++#if defined(_WIN32) || defined(__ANDROID__)
++// Windows has no backtrace() or thread signals, and Android's backtrace() needs
++// API 33: DOL_GX_STALL_STACKS is a Mac and Linux diagnostic.
+ void start_stall_watchdog() {}
+ #else
+ void start_stall_watchdog() {
+diff --git a/GXRuntime/graphics/aurora/lib/gfx/pipeline_cache.cpp b/GXRuntime/graphics/aurora/lib/gfx/pipeline_cache.cpp
+index b807ac8..e1bd68e 100644
+--- a/GXRuntime/graphics/aurora/lib/gfx/pipeline_cache.cpp
++++ b/GXRuntime/graphics/aurora/lib/gfx/pipeline_cache.cpp
+@@ -589,6 +589,11 @@ static void pipeline_cache_abort() {
+ static bool write_pipeline_cache_record(const PipelineCacheWrite& write);
+ 
+ static std::string pipeline_cache_seed_path() {
++#if defined(__ANDROID__)
++  // The seed is an APK asset, which SDL opens by its bare name (SDL's base path
++  // here, "./", would not name an asset).
++  return InitialPipelineCacheName;
++#endif
+   if (g_config.resourcesPath == nullptr || g_config.resourcesPath[0] == '\0') {
+     return InitialPipelineCacheName;
+   }
+diff --git a/GXRuntime/graphics/aurora/lib/gfx/texture_replacement.cpp b/GXRuntime/graphics/aurora/lib/gfx/texture_replacement.cpp
+index 1d123c8..9d1b455 100644
+--- a/GXRuntime/graphics/aurora/lib/gfx/texture_replacement.cpp
++++ b/GXRuntime/graphics/aurora/lib/gfx/texture_replacement.cpp
+@@ -41,9 +41,9 @@ using aurora::webgpu::g_device;
+ namespace {
+ aurora::Module Log("aurora::texture");
+ 
+-#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
+-// iPad and iPhone apps share far less memory; the decoded HD textures of a
+-// scene stay well under this.
++#if (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS) || defined(__ANDROID__)
++// iPad, iPhone and Android apps share far less memory; the decoded HD textures
++// of a scene stay well under this.
+ constexpr uint64_t kReplacementCacheBudgetBytes = 1073741824; // 1GB
+ #else
+ constexpr uint64_t kReplacementCacheBudgetBytes = 4294967296; // 4GB

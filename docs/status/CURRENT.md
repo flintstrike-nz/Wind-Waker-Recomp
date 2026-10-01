@@ -1,3 +1,35 @@
+## 2026-10-01 An Android port: built and packaged, never run (target: the Oppo Find N3's inner screen)
+
+`android/` (the Kotlin app and `android/native`, the host's CMake for the NDK), `scripts/android/build.sh`
+(`build_device.sh`), `docs/ANDROID.md` and `patches/android/recompcore`. The host sources are the
+unchanged ones: `runtime/host/src/touch_platform.h` now says iOS and Android are touch platforms (the
+three `TARGET_OS_IPHONE` checks in `jump_button.c`, `mouse_camera.c` and `settings_menu.h` use it, with
+no change on Apple, Windows or Linux), `apple/ios/src/disc_import.c` has a portable SHA-1 where
+CommonCrypto is absent, and `cmake/composite` names the module `libgGZLE01_recomp.so` on Android. Aurora
+already had Android window, Dawn-package and SDL3 support; three small RecompCore changes (an
+`execinfo.h` guard for API 29, the seed pipeline cache named as an APK asset, the HD texture cache
+budget) are in `patches/android/recompcore/0001`, applied by the builder to its own checkout
+(`ref/recompcore-android`) so the iOS builder's pinned-source check is unaffected.
+
+Checked: the host and the disc importer cross-compile and link with NDK r27c for arm64 (Dawn's Android
+package, SDL3 3.4.10 static; `SDL_main`, SDL's JNI and the app's JNI entry points are exported); the
+non-generated game-module sources compile, and a synthetic three-instruction game, translated by the
+pinned DolRecomp and merged by `generate_composite.py`, builds through `cmake/composite` to a
+`libgGZLE01_recomp.so` whose only imports are libc and which exports `staticrecomp_get_module`; Gradle
+builds the app and `build.sh` produces a signed (v2) APK from those libraries, with the audit refusing
+private file types; the portable SHA-1 matches known vectors; `disc_extract` builds on Linux and refuses
+a non-disc; Android lint reports nothing in the app's own code at error level. The desktop path of the
+three shared files still compiles.
+
+Not checked, because the environment had no disc and no device: any run. The real composite's compile
+(NDK clang at -O2 over 748 chunks) and its size, `dlopen` from `nativeLibraryDir`, Dawn's Vulkan device
+and surface on Android, the disc import on a real file picker, the controls' geometry, the strip layout
+(the surface is shortened from the bottom and the renderer refits the picture), Flex mode, 120 Hz, the
+frame rate, and audio. No profile-guided optimization is applied: the bundled profiles are Apple LLVM's
+and the NDK's `llvm-profdata` rejects their format. The CPU flags are `-march=armv8-a
+-mtune=cortex-x3` (the baseline of every arm64 Android device); `-mcpu=cortex-a715` would enable SVE, which
+Qualcomm's cores do not implement.
+
 ## 2026-09-30 The Windows build's GX worker work merged (Mac-tested)
 
 RecompCore 8ab24da (patch 0112) merges the Windows build's RecompCore branch (windows-release, forked

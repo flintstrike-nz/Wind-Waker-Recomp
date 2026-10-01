@@ -9,9 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#endif
+#include "touch_platform.h"
 
 // Wind Waker has no jump button: Link jumps only when he runs off a ledge.
 // Each frame daPy_lk_c::execute (GZLE01 0x80121870) first lets
@@ -218,7 +216,7 @@ bool bluewake_jump_button_enter(CPUState* cpu, u32 address) {
 }
 
 void bluewake_jump_button_event(const void* sdl_event) {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
+#if BLUEWAKE_TOUCH_PLATFORM
     (void)sdl_event;
 #else
     const SDL_Event* event = (const SDL_Event*)sdl_event;
@@ -251,7 +249,7 @@ void bluewake_jump_button_attach(CPUState* cpu) {
         g_target_length = 0u;
     if (g_test_count > 0u || g_target_length > 0u)
         g_trace = true;
-#if !(defined(__APPLE__) && TARGET_OS_IPHONE)
+#if !BLUEWAKE_TOUCH_PLATFORM
     if (g_enabled)
         fprintf(stderr, "[jump] Space (or a controller's left bumper) makes Link jump\n");
 #endif
