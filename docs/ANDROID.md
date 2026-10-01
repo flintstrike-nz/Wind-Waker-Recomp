@@ -55,6 +55,12 @@ The builder keeps what it has finished, so rerunning the same command resumes; `
 `--help`) restarts from a given step. `--cmake-arg` passes extra arguments to the native configure, for a
 network that cannot fetch GitHub's source archives.
 
+To sign with a key of your own, pass `--keystore FILE` (alias `bluewake`). Its password is never taken from
+the command line: the builder reads it from `$BLUEWAKE_KEYSTORE_PASSWORD`, or from `FILE.password` beside the
+keystore (the one it creates for its own key is written there, readable only by you), and hands it to
+`keytool` and Gradle through the environment. Keep both out of version control; the repository audit
+rejects `*.keystore`, `*.jks` and `*.password` files.
+
 The toolchain is pinned so two builds of the same source make the same code: NDK 27.2.12479018 and
 build-tools 35.0.0 exactly (`--ndk` overrides the NDK and the provenance says so), the Gradle distribution
 by SHA-256, the Maven dependencies by `android/gradle/verification-metadata.xml`, and the patched RecompCore
