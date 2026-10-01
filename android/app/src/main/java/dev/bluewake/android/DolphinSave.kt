@@ -51,8 +51,8 @@ class DolphinSaveImport(
     private var counter = 0
 
     // An import whose screen is gone must not commit: the card may belong to a newer screen or the game by
-    // then. The flag is set and tested under the same lock the swap runs under, so an import either
-    // commits completely before [cancel] returns or never does.
+    // then. The flag is set and tested under the same lock the final rename runs under, so an import
+    // either commits before [cancel] returns or never does.
     private val commitLock = Any()
     private var cancelled = false
 
@@ -66,6 +66,7 @@ class DolphinSaveImport(
             throw IOException("BlueWake makes its memory card when the game starts. Start the game once, " +
                 "save, and then try again.")
         val file = newStaged()
+        var inspected = false
         try {
             resolver.openInputStream(source)?.use { input ->
                 file.outputStream().use { out ->
@@ -84,11 +85,13 @@ class DolphinSaveImport(
             if (theirs[0].isNotEmpty()) throw IOException(theirs[0])
             val card = DiscNative.nativeCardQuestLogs(paths.card.absolutePath)
             if (card[0].isNotEmpty()) throw IOException(card[0])
-            return Inspection(file, displayName, (1..3).map { QuestLog.parse(theirs[it]) },
+            val found = Inspection(file, displayName, (1..3).map { QuestLog.parse(theirs[it]) },
                 if (card[1] == "1") (2..4).map { QuestLog.parse(card[it]) } else emptyList())
-        } catch (e: IOException) {
-            file.delete()
-            throw e
+            inspected = true
+            return found
+        } finally {
+            // Whatever went wrong (a read, the native parser), no staged copy outlives the failure.
+            if (!inspected) file.delete()
         }
     }
 
@@ -105,9 +108,19 @@ class DolphinSaveImport(
                 result.absolutePath)?.let { return it }
             // The result must be a sound container before it replaces anything.
             DiscNative.nativeCardCheck(result.absolutePath)?.let { return it }
+            // The slow part, the copy of the current card into Backups, is done before the lock is taken so
+            // that a screen being destroyed never waits for it; only the check and the rename are inside.
+            val backup = try {
+                saves.backUpCard()
+            } catch (e: IOException) {
+                return "Your saves were not changed. ${e.message}"
+            }
             synchronized(commitLock) {
-                if (cancelled) return "The import was cancelled."
-                return saves.swapIn(result)
+                if (cancelled) {
+                    backup?.delete()
+                    return "The import was cancelled."
+                }
+                return saves.replaceCard(result)
             }
         } finally {
             result.delete()

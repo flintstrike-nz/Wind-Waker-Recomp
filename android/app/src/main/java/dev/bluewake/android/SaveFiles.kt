@@ -87,19 +87,28 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
      */
     fun swapIn(staged: File): String? {
         try {
-            if (paths.card.isFile) {
-                paths.backups.mkdirs()
-                val backup = File(paths.backups, "GZLE01-${stamp("yyyyMMdd-HHmmss")}.card")
-                paths.card.copyTo(backup, overwrite = true)
-            }
-            if (!staged.renameTo(paths.card)) return "The save file could not be put in place."
-            return null
+            backUpCard()
+            return replaceCard(staged)
         } catch (e: IOException) {
             return "Your saves were not changed. ${e.message}"
         } finally {
             staged.delete()
         }
     }
+
+    /** Copies the current card into Backups (the slow part of a swap); null when there is no card yet. */
+    @Throws(IOException::class)
+    fun backUpCard(): File? {
+        if (!paths.card.isFile) return null
+        paths.backups.mkdirs()
+        val backup = File(paths.backups, "GZLE01-${stamp("yyyyMMdd-HHmmss")}.card")
+        paths.card.copyTo(backup, overwrite = true)
+        return backup
+    }
+
+    /** The instant half of a swap: renames [staged] over the card. Null on success, else a sentence. */
+    fun replaceCard(staged: File): String? =
+        if (staged.renameTo(paths.card)) null else "The save file could not be put in place."
 
     private fun stamp(pattern: String) = SimpleDateFormat(pattern, Locale.US).format(Date())
 }
