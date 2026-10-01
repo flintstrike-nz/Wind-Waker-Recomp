@@ -106,7 +106,7 @@ class ControlsView(context: Context, private val prefs: Prefs) : View(context) {
     private val byId = controls.associateBy { it.id }
     private val owner = HashMap<Int, Control>()   // pointer id -> the control it holds
     private val dragOffset = HashMap<Int, Pair<Float, Float>>()
-    private var lastPublished = Int.MIN_VALUE
+    private var lastPublished = Long.MIN_VALUE
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -341,6 +341,9 @@ class ControlsView(context: Context, private val prefs: Prefs) : View(context) {
             return
         }
         val c = hit(x, y) ?: return
+        // One finger at a time per control: a second finger on a held button or
+        // stick would share its state, and lifting either would clear it.
+        if (owner.containsValue(c)) return
         owner[id] = c
         press(c, x, y)
     }
@@ -364,7 +367,8 @@ class ControlsView(context: Context, private val prefs: Prefs) : View(context) {
                 val now = hit(x, y)
                 if (now !== c) {
                     c.held = false
-                    if (now != null && (now.kind == Kind.ROUND || now.kind == Kind.PILL)) {
+                    if (now != null && (now.kind == Kind.ROUND || now.kind == Kind.PILL) &&
+                        !owner.containsValue(now)) {
                         owner[id] = now
                         now.held = true
                     } else {
@@ -452,7 +456,9 @@ class ControlsView(context: Context, private val prefs: Prefs) : View(context) {
     }
 
     private fun send(buttons: Int, sx: Int, sy: Int, cx: Int, cy: Int) {
-        val key = buttons * 31 * 31 * 31 * 31 + (sx + 127) * 31 * 31 * 31 + (sy + 127) * 31 * 31 + (cx + 127) * 31 + (cy + 127)
+        // Every field in its own bits, so two different states never share a key.
+        val key = (buttons.toLong() shl 32) or ((sx + 127).toLong() shl 24) or ((sy + 127).toLong() shl 16) or
+            ((cx + 127).toLong() shl 8) or (cy + 127).toLong()
         if (key == lastPublished) return
         lastPublished = key
         try {

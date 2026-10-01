@@ -172,10 +172,11 @@ class GameActivity : SDLActivity(), ControlsView.Host {
      * the controls take; the renderer then fits the picture in what is left, so
      * the picture sits at the top and the controls under it. The strip is:
      *  - below the hinge in Flex mode;
-     *  - the room left under the picture's own shape when that is at least 140 dp
-     *    (4:3 on the Find N3's inner screen leaves about 167 dp; 16:9 much more);
-     *  - none otherwise (the cover screen, "Over the picture", a picture that
-     *    fills the screen): the controls cover the picture's lower part.
+     *  - with "Automatic" placement, the room left under the picture's own shape when that is
+     *    at least 140 dp (4:3 on the Find N3's inner screen leaves about 167 dp; 16:9 much more);
+     *  - with "Below the picture", always: that room, or 160 dp if there is less;
+     *  - none otherwise (the cover screen under "Automatic", "Over the picture", a picture
+     *    that fills the screen): the controls cover the picture's lower part.
      */
     fun applyLayout() {
         val layout = mLayout as? RelativeLayout ?: return
@@ -193,11 +194,15 @@ class GameActivity : SDLActivity(), ControlsView.Host {
             val top = (hinge.top - location[1]).coerceIn(h / 3, h * 3 / 4)
             band = h - top
             key = "flex"
-        } else if (!launchFill && prefs.placement != Prefs.PLACE_OVER) {
-            val aspect = when (launchWidescreen) { 1 -> 16f / 9f; 2 -> 1.6f; else -> 4f / 3f }
-            val spare = h - w / aspect
-            val needed = (if (prefs.placement == Prefs.PLACE_BELOW) 40f else 140f) * d
-            if (spare >= needed) {
+        } else if (prefs.placement == Prefs.PLACE_BELOW) {
+            // Asked for: always a strip, the room left under the picture's shape or at least
+            // 160 dp, and never more than half the window.
+            val spare = if (launchFill) 0f else h - w / pictureAspect()
+            band = max(spare, 160f * d).toInt().coerceAtMost(h / 2)
+            key = "band"
+        } else if (!launchFill && prefs.placement == Prefs.PLACE_AUTO) {
+            val spare = h - w / pictureAspect()
+            if (spare >= 140f * d) {
                 band = spare.toInt()
                 key = "band"
             }
@@ -218,6 +223,8 @@ class GameActivity : SDLActivity(), ControlsView.Host {
         view.layoutKey = key
         view.relayout()
     }
+
+    private fun pictureAspect() = when (launchWidescreen) { 1 -> 16f / 9f; 2 -> 1.6f; else -> 4f / 3f }
 
     // ---------------------------------------------------------------- controls and the menu
 

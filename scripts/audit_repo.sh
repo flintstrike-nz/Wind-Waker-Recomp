@@ -15,7 +15,8 @@ paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
 patterns = ('*.iso', '*.gcm', '*.rvz', '*.nfs', '*.wbfs', '*.wia', '*.ciso',
             '*.gcz', '*.dol', '*.rel', '*.sav', '*.gci', '*.card', '*.raw',
             '*.p12', '*.mobileprovision', '*.provisionprofile', 'dolphin_*.bin',
-            '*.ipa', '*.apk', '*.aab', '*.keystore', '*.jks', '*.profraw',
+            '*.ipa', '*.apk', '*.aab', '*.keystore', '*.keystore.password', '*.jks',
+            '*.profraw',
             '*.profdata', '*.dylib')
 reviewed_profiles = {'scripts/builder/profiles/bluewake/composite-rt.profdata',
                      'scripts/builder/profiles/bluewake/host.profdata'}

@@ -183,15 +183,23 @@ java_major=$(printf '%s' "$java_line" | sed -E 's/.* version "([0-9]+)[."].*/\1/
 sdk=${sdk:-${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}}
 [ -n "$sdk" ] && [ -d "$sdk" ] || die "the Android SDK was not found: pass --sdk DIR or set ANDROID_HOME (docs/ANDROID.md says how to install it)"
 sdk=$(cd "$sdk" && pwd)
-sdkmanager_hint="install with: sdkmanager \"ndk;27.2.12479018\" \"platforms;android-35\" \"build-tools;35.0.0\" \"platform-tools\""
+# The toolchain is pinned, so two builds of the same source make the same code: this exact NDK and
+# these exact build-tools (--ndk overrides the NDK, and the provenance says so).
+NDK_VERSION=27.2.12479018
+BUILD_TOOLS_VERSION=35.0.0
+sdkmanager_hint="install with: sdkmanager \"ndk;$NDK_VERSION\" \"platforms;android-35\" \"build-tools;$BUILD_TOOLS_VERSION\" \"platform-tools\""
+ndk_override=false
 if [ -z "$ndk" ]; then
-    ndk=$(ls -d "$sdk"/ndk/27.* 2>/dev/null | sort -V | tail -1 || true)
+    ndk=$sdk/ndk/$NDK_VERSION
+else
+    ndk_override=true
 fi
-[ -n "$ndk" ] && [ -f "$ndk/build/cmake/android.toolchain.cmake" ] || die "Android NDK r27 not found in $sdk/ndk ($sdkmanager_hint)"
+[ -f "$ndk/build/cmake/android.toolchain.cmake" ] || die "Android NDK $NDK_VERSION not found in $sdk/ndk ($sdkmanager_hint)"
 ndk=$(cd "$ndk" && pwd)
 [ -d "$sdk/platforms/android-35" ] || die "Android platform 35 is missing from $sdk ($sdkmanager_hint)"
-build_tools=$(ls -d "$sdk"/build-tools/3[5-9].* 2>/dev/null | sort -V | tail -1 || true)
-[ -n "$build_tools" ] || die "Android build-tools 35 or newer are missing from $sdk ($sdkmanager_hint)"
+build_tools=$sdk/build-tools/$BUILD_TOOLS_VERSION
+[ -x "$build_tools/apksigner" ] || die "Android build-tools $BUILD_TOOLS_VERSION are missing from $sdk ($sdkmanager_hint)"
+ndk_revision=$(sed -n 's/^Pkg.Revision *= *//p' "$ndk/source.properties" 2>/dev/null | head -1)
 ndk_bin=$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin | head -1)
 export ANDROID_HOME=$sdk ANDROID_SDK_ROOT=$sdk
 if [ -n "$install" ] && [ "$install" -eq 1 ]; then
@@ -199,7 +207,7 @@ if [ -n "$install" ] && [ "$install" -eq 1 ]; then
     [ -x "$adb" ] || adb=$(command -v adb || true)
     [ -n "$adb" ] || die "--install needs adb (sdkmanager \"platform-tools\")"
 fi
-echo "cmake $cmake_version, jdk $java_major, ndk $(basename "$ndk"), build-tools $(basename "$build_tools"), $jobs jobs"
+echo "cmake $cmake_version, jdk $java_major, ndk ${ndk_revision:-$(basename "$ndk")}, build-tools $BUILD_TOOLS_VERSION, $jobs jobs"
 
 # ------------------------------------------------------------------ 2 dependencies
 # The same pinned RecompCore and DolRecomp as the iOS builder (the profile's),
@@ -242,11 +250,12 @@ android_dependencies() {
     [ "$(git -C "$recompcore/DolRecomp" rev-parse HEAD)" = "$DOLRECOMP_SHA" ] || die "ref/recompcore-android/DolRecomp is not at $DOLRECOMP_SHA"
     [ -z "$(git -C "$recompcore/DolRecomp" status --porcelain --untracked-files=no)" ] || die "ref/recompcore-android/DolRecomp has local changes; the build must use the pinned source exactly"
 
-    # The Android changes: applied once, and nothing else may differ from the pin.
-    local patch touched
-    touched=$(mktemp)
+    # The Android changes: applied once, and then the whole checkout must be exactly the pin plus
+    # those patches. Compared by content: the tree the patches make from a clean index against the
+    # tree of the working files (tracked files; DolRecomp is checked above).
+    local patch patches=()
     for patch in "$root"/patches/android/recompcore/*.patch; do
-        git -C "$recompcore" apply --numstat "$patch" | awk '{print $3}' >> "$touched"
+        patches+=("$patch")
         if git -C "$recompcore" apply --reverse --check "$patch" >/dev/null 2>&1; then
             continue    # already applied
         fi
@@ -254,10 +263,17 @@ android_dependencies() {
         git -C "$recompcore" apply "$patch"
         echo "applied $(basename "$patch")"
     done
-    while IFS= read -r changed; do
-        grep -qxF "$changed" "$touched" || die "ref/recompcore-android has local changes ($changed); the build must use the pinned source plus patches/android exactly"
-    done < <(git -C "$recompcore" diff --name-only)
-    rm -f "$touched"
+    local index expected actual
+    index=$(mktemp -u "${TMPDIR:-/tmp}/bluewake-index.XXXXXX")
+    expected=$(GIT_INDEX_FILE=$index git -C "$recompcore" read-tree HEAD && \
+        GIT_INDEX_FILE=$index git -C "$recompcore" apply --cached "${patches[@]}" && \
+        GIT_INDEX_FILE=$index git -C "$recompcore" write-tree) || die "could not compute the expected RecompCore tree"
+    rm -f "$index"
+    actual=$(GIT_INDEX_FILE=$index git -C "$recompcore" read-tree HEAD && \
+        GIT_INDEX_FILE=$index git -C "$recompcore" add -u && \
+        GIT_INDEX_FILE=$index git -C "$recompcore" write-tree) || die "could not compute the RecompCore working tree"
+    rm -f "$index"
+    [ "$expected" = "$actual" ] || die "ref/recompcore-android differs from the pinned source plus patches/android (local edits?): move it aside and rerun"
     echo "RecompCore $RECOMPCORE_SHA, DolRecomp $DOLRECOMP_SHA, patches/android applied"
 
     deps=$root/build/deps
@@ -399,6 +415,16 @@ if should_run apk; then
   "recompcore": "$RECOMPCORE_SHA",
   "dolrecomp": "$DOLRECOMP_SHA",
   "dawn_package_sha256": "$DAWN_ANDROID_SHA256",
+  "android_patches_sha256": "$(cat "$root"/patches/android/recompcore/*.patch | shasum -a 256 | awk '{print $1}')",
+  "ndk": "${ndk_revision:-unknown}",
+  "ndk_override": $ndk_override,
+  "build_tools": "$BUILD_TOOLS_VERSION",
+  "cmake": "$cmake_version",
+  "jdk_major": "$java_major",
+  "gradle_distribution_sha256": "$(sed -n 's/^distributionSha256Sum=//p' "$root/android/gradle/wrapper/gradle-wrapper.properties")",
+  "gradle_dependency_verification_sha256": "$([ -f "$root/android/gradle/verification-metadata.xml" ] && sha256_of "$root/android/gradle/verification-metadata.xml" || echo none)",
+  "gradle_build_files_sha256": "$(cat "$root"/android/build.gradle.kts "$root"/android/settings.gradle.kts "$root"/android/app/build.gradle.kts | shasum -a 256 | awk '{print $1}')",
+  "sdl3": "release-3.4.10 (Aurora's CMake, by tag)",
   "composite_digest": "$(cat "$out/composite-src.digest" 2>/dev/null || true)",
   "mods": $([ "$mods" -eq 1 ] && echo true || echo false),
   "cpu_flags": "$cpu_flags",

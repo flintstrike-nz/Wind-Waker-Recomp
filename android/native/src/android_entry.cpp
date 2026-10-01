@@ -26,6 +26,7 @@
 
 #include <android/log.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,6 +67,8 @@ void set_default_if_exists(const char* name, const std::string& path) {
 // the device (the app's "Share session log") without a computer attached, and
 // a moment the player remembers ("it lagged around 3:42") can be found in it.
 FILE* g_log_file = nullptr;
+pthread_t g_log_thread;
+bool g_log_thread_started = false;
 
 void* log_pump(void* arg) {
     const int read_fd = static_cast<int>(reinterpret_cast<intptr_t>(arg));
@@ -106,6 +109,23 @@ void prune_old_logs(const std::string& dir) {
     for (size_t i = 0; i + 7 < sessions.size(); i++) unlink((dir + "/" + sessions[i]).c_str());
 }
 
+// Closes the pipe's write ends (stdout and stderr go to /dev/null from here) so the pump reads
+// to the end, writes and flushes the file, and returns; then waits for it.
+void stop_session_log() {
+    if (!g_log_thread_started) return;
+    g_log_thread_started = false;
+    fflush(stdout);
+    fflush(stderr);
+    const int null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd >= 0) {
+        dup2(null_fd, STDOUT_FILENO);
+        dup2(null_fd, STDERR_FILENO);
+        close(null_fd);
+    }
+    pthread_join(g_log_thread, nullptr);
+    if (g_log_file != nullptr) fflush(g_log_file);
+}
+
 void start_session_log(const std::string& data) {
     const std::string dir = data + "/logs";
     mkdir(dir.c_str(), 0700);
@@ -121,10 +141,12 @@ void start_session_log(const std::string& data) {
     dup2(fds[1], STDOUT_FILENO);
     dup2(fds[1], STDERR_FILENO);
     close(fds[1]);
-    pthread_t thread;
-    pthread_create(&thread, nullptr, log_pump,
-                   reinterpret_cast<void*>(static_cast<intptr_t>(fds[0])));
-    pthread_detach(thread);
+    g_log_thread_started =
+        pthread_create(&g_log_thread, nullptr, log_pump,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(fds[0]))) == 0;
+    // Whatever way the process ends (exit() anywhere in the host, or main returning), let the
+    // pump write the last lines, a fatal error's included, before it goes.
+    atexit(stop_session_log);
 }
 
 }  // namespace
@@ -206,8 +228,7 @@ int main(int argc, char** argv) {
     const int status = bluewake_host_main(host_argc, host_argv);
     // Returning from SDL_main leaves the Activity open with no game. The host
     // only returns at a bounded stop (BLUEWAKE_MAX_RETRACES), a quit or a fatal
-    // error, and in each case the process should end.
-    fflush(stdout);
-    fflush(stderr);
+    // error, and in each case the process should end. (exit() runs
+    // stop_session_log, which drains the log.)
     exit(status);
 }

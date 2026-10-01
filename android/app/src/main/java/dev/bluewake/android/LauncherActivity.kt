@@ -54,6 +54,9 @@ class LauncherActivity : ComponentActivity() {
     private lateinit var removePack: Button
     private lateinit var packNote: TextView
     private var busy = false
+    // Counting the installed textures walks the whole pack (thousands of files): done on the
+    // worker after the pack changes, not on every refresh.
+    private var textureCount = 0
 
     private val pickDisc = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importDisc(uri)
@@ -61,10 +64,15 @@ class LauncherActivity : ComponentActivity() {
     private val pickBackupTarget = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         if (uri != null) {
-            val problem = saves.backUpTo(uri)
-            message(if (problem == null) "Saves backed up" else "Could not back up",
-                problem ?: "The file holds your saves as of your last in-game save. " +
-                    "Use Restore saves to bring them back.")
+            // The destination may be a cloud or slow provider: copy off the main thread.
+            runBusy("Backing up the saves…") {
+                val problem = saves.backUpTo(uri)
+                Runnable {
+                    message(if (problem == null) "Saves backed up" else "Could not back up",
+                        problem ?: "The file holds your saves as of your last in-game save. " +
+                            "Use Restore saves to bring them back.")
+                }
+            }
         }
     }
     private val pickRestoreSource = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -83,6 +91,35 @@ class LauncherActivity : ComponentActivity() {
         saves = SaveFiles(contentResolver, paths)
         setContentView(buildContent())
         refresh()
+        recountTextures()
+    }
+
+    private fun recountTextures() {
+        worker.execute {
+            val n = TexturePack(contentResolver, paths).count()
+            ui.post { textureCount = n; refresh() }
+        }
+    }
+
+    /**
+     * Runs [work] on the worker with the screen marked busy; it returns what to do on the main
+     * thread afterwards (a dialog, say). Used for copies to and from other apps' storage.
+     */
+    private fun runBusy(what: String, work: () -> Runnable) {
+        busy = true
+        progress.isIndeterminate = true
+        status.text = what
+        refresh()
+        worker.execute {
+            val after = work()
+            ui.post {
+                busy = false
+                progress.isIndeterminate = false
+                status.text = ""
+                refresh()
+                after.run()
+            }
+        }
     }
 
     override fun onResume() {
@@ -117,7 +154,7 @@ class LauncherActivity : ComponentActivity() {
         backUp.isEnabled = !busy && saves.hasCard()
         restore.isEnabled = !busy
         remove.isEnabled = !busy && (disc || prepared)
-        val textures = TexturePack(contentResolver, paths).count()
+        val textures = textureCount
         installPack.isEnabled = !busy
         removePack.isEnabled = !busy && textures > 0
         packNote.text = if (textures > 0) "$textures textures installed. Turn them on in the game's menu: Mods › HD textures."
@@ -188,6 +225,7 @@ class LauncherActivity : ComponentActivity() {
                 progress.isIndeterminate = false
                 status.text = ""
                 refresh()
+                recountTextures()
                 if (problem != null) message("Could not install the pack", problem)
                 else message("Texture pack installed", "$copied textures. Turn them on in the game's menu: Mods › HD textures.")
             }
@@ -200,8 +238,10 @@ class LauncherActivity : ComponentActivity() {
             .setMessage("The installed textures are deleted from this app's storage.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Remove") { _, _ ->
-                TexturePack(contentResolver, paths).remove()
-                refresh()
+                runBusy("Removing the textures…") {
+                    TexturePack(contentResolver, paths).remove()
+                    Runnable { recountTextures() }
+                }
             }
             .show()
     }
@@ -213,10 +253,13 @@ class LauncherActivity : ComponentActivity() {
                 "the app's Backups folder.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Replace saves") { _, _ ->
-                val problem = saves.restoreFrom(uri)
-                message(if (problem == null) "Saves restored" else "Saves not changed",
-                    problem ?: "They will load the next time you start the game.")
-                refresh()
+                runBusy("Restoring the saves…") {
+                    val problem = saves.restoreFrom(uri)
+                    Runnable {
+                        message(if (problem == null) "Saves restored" else "Saves not changed",
+                            problem ?: "They will load the next time you start the game.")
+                    }
+                }
             }
             .show()
     }

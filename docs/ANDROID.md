@@ -31,8 +31,8 @@ On the computer that builds the app (a Mac or Linux PC, x86-64 or arm64, 25 GB f
 - your `GZLE01` revision 0 disc image as an `.iso` (or `.gcm`)
 - network access to GitHub and Maven on the first run
 
-On the device: arm64, Android 10 or newer, Vulkan 1.1 (any Snapdragon 8 Gen 1 or newer is plenty), and
-about 4 GB of free storage (the app keeps a 1.5 GB copy of your disc image, private to it).
+On the device: arm64, Android 10 or newer, Vulkan 1.1 (no minimum chip has been established: nothing has
+been measured on any device yet), and about 4 GB of free storage (the app keeps a 1.5 GB copy of your disc image, private to it).
 
 ## Build
 
@@ -54,6 +54,13 @@ with the recorded digest before the long step. What differs:
 The builder keeps what it has finished, so rerunning the same command resumes; `--start-at STEP` (see
 `--help`) restarts from a given step. `--cmake-arg` passes extra arguments to the native configure, for a
 network that cannot fetch GitHub's source archives.
+
+The toolchain is pinned so two builds of the same source make the same code: NDK 27.2.12479018 and
+build-tools 35.0.0 exactly (`--ndk` overrides the NDK and the provenance says so), the Gradle distribution
+by SHA-256, the Maven dependencies by `android/gradle/verification-metadata.xml`, and the patched RecompCore
+checkout is compared by content with the pin plus `patches/android`. The APK carries a
+`BuilderProvenance.json` asset recording these inputs. (`./gradlew lint` is not covered by the dependency
+metadata; run it with `--dependency-verification=lenient`.)
 
 The generated source, the translated game code and the APK stay under `build/`, which git ignores, and the
 APK is refused anywhere inside the repository that git could commit. The APK holds code translated from
