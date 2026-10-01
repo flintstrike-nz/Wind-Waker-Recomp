@@ -101,8 +101,18 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
     fun backUpCard(): File? {
         if (!paths.card.isFile) return null
         paths.backups.mkdirs()
-        val backup = File(paths.backups, "GZLE01-${stamp("yyyyMMdd-HHmmss")}.card")
-        paths.card.copyTo(backup, overwrite = true)
+        // The name is reserved atomically, so two backups in the same second never share a file and a
+        // caller that removes its own backup can never remove somebody else's.
+        val stem = "GZLE01-${stamp("yyyyMMdd-HHmmss")}"
+        var backup = File(paths.backups, "$stem.card")
+        var n = 1
+        while (!backup.createNewFile()) backup = File(paths.backups, "$stem-${n++}.card")
+        try {
+            paths.card.copyTo(backup, overwrite = true)
+        } catch (e: IOException) {
+            backup.delete()
+            throw e
+        }
         return backup
     }
 
