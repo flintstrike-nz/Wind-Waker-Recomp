@@ -184,7 +184,8 @@ int main(int argc, char** argv) {
 
     set_default("BLUEWAKE_RENDERER", "aurora");
     set_default("BLUEWAKE_CYCLE_CAP", "16384");
-    set_default("BLUEWAKE_MAX_BLOCKS", "100000000000");
+    // BLUEWAKE_MAX_BLOCKS stays unset: the host treats that as no cap, which is what a person
+    // playing needs (a finite budget stopped the app mid-session once; main.c).
     // Dolphin's high-level Zelda ucode: about 15% fewer play-window cycles than
     // the LLE interpreter (docs/status/CURRENT.md). BLUEWAKE_DSP_MODE=lle
     // restores LLE.

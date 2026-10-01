@@ -46,7 +46,8 @@ add_subdirectory(${GXRUNTIME_DIR} gxruntime_build EXCLUDE_FROM_ALL)
 # shared with the iOS app; its JNI entry points are in disc_jni.c.
 add_library(bwdisc SHARED
     src/disc_jni.c
-    ${BLUEWAKE_IOS_SRC}/disc_import.c)
+    ${BLUEWAKE_IOS_SRC}/disc_import.c
+    ${BLUEWAKE_IOS_SRC}/dolphin_save_import.c)
 target_include_directories(bwdisc PRIVATE ${BLUEWAKE_IOS_SRC})
 target_link_libraries(bwdisc PRIVATE log)
 

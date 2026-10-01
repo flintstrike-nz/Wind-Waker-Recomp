@@ -28,15 +28,17 @@
 #   --sdk DIR                Android SDK (default $ANDROID_HOME or $ANDROID_SDK_ROOT)
 #   --ndk DIR                Android NDK r27 (default: the newest 27.x in the SDK)
 #   --cpu FLAGS              compiler flags choosing the CPU for the game module and the
-#                            host (default "-march=armv8.2-a -mtune=cortex-x3": every
-#                            Snapdragon 8 Gen 2 core, with no SVE, which Qualcomm's cores
-#                            do not implement)
+#                            host (default "-march=armv8-a -mtune=cortex-x3": the Armv8-A
+#                            baseline every arm64 Android device has, scheduled for the
+#                            Snapdragon 8 Gen 2's big core. Do not use -mcpu=cortex-a715 or
+#                            -march=armv9-a: they allow SVE, which Qualcomm's cores lack)
 #   --composite-pgo FILE     LLVM .profdata for the game module (made with the NDK's LLVM)
 #   --host-pgo FILE          LLVM .profdata for the host
 #   --keystore FILE          signing keystore (alias "bluewake"); default OUT/signing/, made on
 #                            first use. Keep it: an update installs over the app only if it is
 #                            signed by the same key
-#   --keystore-password PW   its password (default: read from its .password file)
+#                            Its password comes from $BLUEWAKE_KEYSTORE_PASSWORD or the file
+#                            KEYSTORE.password next to it (never from the command line)
 #   --install                install the APK with adb (a device in USB debugging mode)
 #   --cmake-arg ARG          an extra argument for the native CMake configure (repeatable),
 #                            e.g. -DFETCHCONTENT_SOURCE_DIR_SDL=... on a network that cannot
@@ -54,10 +56,11 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 
-iso="" out="" apk="" sdk="" ndk="" keystore="" keystore_password=""
+iso="" out="" apk="" sdk="" ndk="" keystore=""
+keystore_password=${BLUEWAKE_KEYSTORE_PASSWORD:-}
 jobs=""
 mods=1 accept_new=0 source_only=0 install=0 start_at=deps
-cpu_flags="-march=armv8.2-a -mtune=cortex-x3"
+cpu_flags="-march=armv8-a -mtune=cortex-x3"
 composite_pgo="" host_pgo=""
 cmake_args=()
 opt_level=2
@@ -67,7 +70,7 @@ step() { echo; echo "==> $*"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --apk|--out|--jobs|--sdk|--ndk|--cpu|--composite-pgo|--host-pgo|--keystore|--keystore-password|--cmake-arg|--start-at)
+        --apk|--out|--jobs|--sdk|--ndk|--cpu|--composite-pgo|--host-pgo|--keystore|--cmake-arg|--start-at)
             [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value" ;;
     esac
     case "$1" in
@@ -81,7 +84,6 @@ while [ $# -gt 0 ]; do
         --composite-pgo) composite_pgo=$2; shift 2 ;;
         --host-pgo) host_pgo=$2; shift 2 ;;
         --keystore) keystore=$2; shift 2 ;;
-        --keystore-password) keystore_password=$2; shift 2 ;;
         --install) install=1; shift ;;
         --cmake-arg) cmake_args+=("$2"); shift 2 ;;
         --start-at) start_at=$2; shift 2 ;;
@@ -428,7 +430,8 @@ if should_run apk; then
   "composite_digest": "$(cat "$out/composite-src.digest" 2>/dev/null || true)",
   "mods": $([ "$mods" -eq 1 ] && echo true || echo false),
   "cpu_flags": "$cpu_flags",
-  "game_module_profile": $([ -n "$composite_pgo" ] && echo true || echo false),
+  "game_module_profile_sha256": "$([ -n "$composite_pgo" ] && sha256_of "$composite_pgo" || echo none)",
+  "host_profile_sha256": "$([ -n "$host_pgo" ] && sha256_of "$host_pgo" || echo none)",
   "module_sha256": "$(sha256_of "$jni/$module_name")",
   "host_sha256": "$(sha256_of "$jni/libmain.so")",
   "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -442,19 +445,23 @@ EOF
             mkdir -p "$out/signing"
             pw=$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')
             (umask 077; printf '%s' "$pw" > "$keystore.password")
-            run keystore keytool -genkeypair -keystore "$keystore" -storepass "$pw" -keypass "$pw" \
+            # The password goes to keytool through the environment, not its command line, so
+            # it is in neither the process list nor a failed step's log line.
+            BLUEWAKE_KEYTOOL_PW=$pw run keystore keytool -genkeypair -keystore "$keystore" \
+                -storepass:env BLUEWAKE_KEYTOOL_PW -keypass:env BLUEWAKE_KEYTOOL_PW \
                 -alias bluewake -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=BlueWake personal build"
             echo "created a signing key: $keystore (keep it: updates must be signed with the same key)"
         fi
     fi
     if [ -z "$keystore_password" ]; then
-        [ -f "$keystore.password" ] || die "no password for $keystore: pass --keystore-password"
+        [ -f "$keystore.password" ] || die "no password for $keystore: set BLUEWAKE_KEYSTORE_PASSWORD or put it in $keystore.password"
         keystore_password=$(cat "$keystore.password")
     fi
 
-    (cd android && run gradle ./gradlew --no-daemon :app:assembleRelease \
-        -PbluewakeJniLibs="$out/jniLibs" -PbluewakeAssets="$assets" \
-        -Pbluewake.keystore="$keystore" -Pbluewake.keystorePassword="$keystore_password")
+    # The password reaches Gradle through the environment (ORG_GRADLE_PROJECT_*), not its arguments.
+    (cd android && ORG_GRADLE_PROJECT_bluewakeKeystorePassword=$keystore_password \
+        run gradle ./gradlew --no-daemon :app:assembleRelease \
+        -PbluewakeJniLibs="$out/jniLibs" -PbluewakeAssets="$assets" -PbluewakeKeystore="$keystore")
     built_apk=$root/android/app/build/outputs/apk/release/app-release.apk
     [ -f "$built_apk" ] || die "Gradle produced no APK ($built_apk)"
     "$build_tools/apksigner" verify --min-sdk-version 29 "$built_apk" >/dev/null 2>&1 || die "the APK's signature does not verify"

@@ -26,8 +26,9 @@ Not checked, because the environment had no disc and no device: any run. The rea
 and surface on Android, the disc import on a real file picker, the controls' geometry, the strip layout
 (the surface is shortened from the bottom and the renderer refits the picture), Flex mode, 120 Hz, the
 frame rate, and audio. No profile-guided optimization is applied: the bundled profiles are Apple LLVM's
-and the NDK's `llvm-profdata` rejects their format. The CPU flags are `-march=armv8.2-a
--mtune=cortex-x3`; `-mcpu=cortex-a715` would enable SVE, which Qualcomm's cores do not implement.
+and the NDK's `llvm-profdata` rejects their format. The CPU flags are `-march=armv8-a
+-mtune=cortex-x3` (the baseline of every arm64 Android device); `-mcpu=cortex-a715` would enable SVE, which
+Qualcomm's cores do not implement.
 
 ## 2026-09-30 The Windows build's GX worker work merged (Mac-tested)
 

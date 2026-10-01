@@ -43,13 +43,20 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
             val staged = File(paths.card.path + ".restore")
             resolver.openInputStream(source)?.use { input -> staged.outputStream().use { input.copyTo(it) } }
                 ?: return "The save file could not be opened."
-            // BlueWake's card files start with this tag (GXRuntime memory_card.c).
+            // A BlueWake card container (GXRuntime memory_card.c): the tag, then the version, block
+            // size, length and checksum are all checked before the current card is touched.
             val magic = ByteArray(8)
             val read = staged.inputStream().use { it.read(magic) }
             if (read != 8 || String(magic, Charsets.US_ASCII) != "DOLCARD1") {
                 staged.delete()
                 return "That is not a BlueWake save file. Pick a .card file made by Back Up Saves " +
                     "or copied from BlueWake's data folder."
+            }
+            if (DiscNative.available()) {
+                DiscNative.nativeCardCheck(staged.absolutePath)?.let {
+                    staged.delete()
+                    return it
+                }
             }
             if (paths.card.isFile) {
                 paths.backups.mkdirs()

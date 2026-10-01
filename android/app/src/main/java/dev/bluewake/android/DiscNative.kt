@@ -25,6 +25,9 @@ object DiscNative {
     /** Null when the file is a GameCube disc image of The Wind Waker (USA), else a sentence for the player. */
     @JvmStatic external fun nativeCheck(path: String): String?
 
+    /** Null when the file is a sound BlueWake memory card container, else a sentence for the player. */
+    @JvmStatic external fun nativeCardCheck(path: String): String?
+
     /** Writes outDir/main.dol and outDir/rels from the disc. Null on success, else a sentence for the player. */
     @JvmStatic external fun nativePrepare(path: String, outDir: String, listener: ProgressListener?): String?
 }

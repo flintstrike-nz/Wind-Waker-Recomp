@@ -97,7 +97,7 @@ class LauncherActivity : ComponentActivity() {
     private fun recountTextures() {
         worker.execute {
             val n = TexturePack(contentResolver, paths).count()
-            ui.post { textureCount = n; refresh() }
+            post { textureCount = n; refresh() }
         }
     }
 
@@ -112,7 +112,7 @@ class LauncherActivity : ComponentActivity() {
         refresh()
         worker.execute {
             val after = work()
-            ui.post {
+            post {
                 busy = false
                 progress.isIndeterminate = false
                 status.text = ""
@@ -128,8 +128,19 @@ class LauncherActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        worker.shutdown()
+        // Work in flight must not touch this destroyed activity: drop what was posted, and
+        // interrupt the worker (the disc copy notices and removes its partial file).
+        destroyed = true
+        ui.removeCallbacksAndMessages(null)
+        worker.shutdownNow()
         super.onDestroy()
+    }
+
+    @Volatile private var destroyed = false
+
+    /** Posts to the main thread unless the activity is gone. */
+    private fun post(block: () -> Unit) {
+        ui.post { if (!destroyed) block() }
     }
 
     // ---------------------------------------------------------------- state
@@ -185,13 +196,13 @@ class LauncherActivity : ComponentActivity() {
         worker.execute {
             val result = DiscImporter(contentResolver, paths).import(uri, object : DiscImporter.Listener {
                 override fun onProgress(fraction: Double, stage: String) {
-                    ui.post {
+                    post {
                         progress.progress = (fraction * 1000).toInt()
                         status.text = stage
                     }
                 }
             })
-            ui.post {
+            post {
                 busy = false
                 status.text = ""
                 refresh()
@@ -215,12 +226,12 @@ class LauncherActivity : ComponentActivity() {
             var copied = 0
             try {
                 copied = TexturePack(contentResolver, paths).install(tree) { n ->
-                    ui.post { status.text = "Copied $n textures…" }
+                    post { status.text = "Copied $n textures…" }
                 }
             } catch (e: java.io.IOException) {
                 problem = e.message ?: "The textures could not be copied."
             }
-            ui.post {
+            post {
                 busy = false
                 progress.isIndeterminate = false
                 status.text = ""
@@ -376,8 +387,21 @@ class LauncherActivity : ComponentActivity() {
 
         // A centered column no wider than 640 dp, inside a scroll view that
         // keeps clear of the system bars and the camera cutout.
-        val frame = LinearLayout(this).apply { gravity = Gravity.CENTER_HORIZONTAL }
-        frame.addView(column, LinearLayout.LayoutParams(dp(640f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT))
+        // The column takes the window's width up to 640 dp (so a narrow window never clips it).
+        val maxWidth = dp(640f).toInt()
+        val capped = object : LinearLayout(this) {
+            override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+                val width = MeasureSpec.getSize(widthSpec)
+                val spec = if (MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED && width > maxWidth)
+                    MeasureSpec.makeMeasureSpec(maxWidth, MeasureSpec.EXACTLY) else widthSpec
+                super.onMeasure(spec, heightSpec)
+            }
+        }.apply { orientation = LinearLayout.VERTICAL }
+        capped.addView(column, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT))
+        val frame = android.widget.FrameLayout(this)
+        frame.addView(capped, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
         val scroll = ScrollView(this).apply { addView(frame) }
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())

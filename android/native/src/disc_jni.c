@@ -5,7 +5,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <stdlib.h>
+
 #include "disc_import.h"
+#include "dolphin_save_import.h"
 
 typedef struct {
     JNIEnv* env;
@@ -53,4 +56,38 @@ JNIEXPORT jstring JNICALL Java_dev_bluewake_android_DiscNative_nativePrepare(
     (*env)->ReleaseStringUTFChars(env, path, iso);
     (*env)->ReleaseStringUTFChars(env, outDir, out);
     return status == 0 ? NULL : utf(env, error);
+}
+
+// Null when the file is a sound BlueWake memory card container (version, block size, payload
+// length and checksum, and every record's framing; the same validation the iOS app does before it
+// touches a card), otherwise a sentence for the player.
+JNIEXPORT jstring JNICALL Java_dev_bluewake_android_DiscNative_nativeCardCheck(
+    JNIEnv* env, jclass cls, jstring path) {
+    (void)cls;
+    const char* file = (*env)->GetStringUTFChars(env, path, NULL);
+    jstring result = NULL;
+    FILE* f = fopen(file, "rb");
+    (*env)->ReleaseStringUTFChars(env, path, file);
+    if (f == NULL) return utf(env, "The save file could not be opened.");
+    fseek(f, 0, SEEK_END);
+    const long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > (64L << 20)) {
+        fclose(f);
+        return utf(env, "That is not a BlueWake save file (the size is wrong).");
+    }
+    uint8_t* bytes = (uint8_t*)malloc((size_t)size);
+    if (bytes == NULL || fread(bytes, 1, (size_t)size, f) != (size_t)size) {
+        free(bytes);
+        fclose(f);
+        return utf(env, "The save file could not be read.");
+    }
+    fclose(f);
+    bool has_saves = false;
+    BWQuestLog logs[BW_QUEST_LOGS];
+    const char* error = bw_card_quest_logs(bytes, (size_t)size, &has_saves, logs);
+    free(bytes);
+    if (error != NULL)
+        result = utf(env, "That save file is damaged or incomplete, so it was not used.");
+    return result;
 }

@@ -47,7 +47,7 @@ with the recorded digest before the long step. What differs:
 
 | Step | Android |
 | --- | --- |
-| compile the game module | the NDK compiles it for arm64 into `libgGZLE01_recomp.so`, `-O2`, with `-march=armv8.2-a -mtune=cortex-x3` (no SVE: Qualcomm's cores do not implement it). Expect several hours on a 4-core PC |
+| compile the game module | the NDK compiles it for arm64 into `libgGZLE01_recomp.so`, `-O2`, with `-march=armv8-a -mtune=cortex-x3` (the baseline every arm64 Android device has, scheduled for the Snapdragon 8 Gen 2's big core; never SVE, which Qualcomm's cores do not implement). Expect several hours on a 4-core PC |
 | host | `android/native` builds `libmain.so` (the unchanged `runtime/host` sources, GXRuntime, the Aurora renderer on Dawn's Vulkan backend, and SDL3 linked in) and `libbwdisc.so` (the disc importer) |
 | app | Gradle (`android/`) packages the libraries with the Kotlin shell and signs the APK with a key the builder makes for you in `build/android/signing/` (keep it: an update installs over the app only if signed by the same key) |
 

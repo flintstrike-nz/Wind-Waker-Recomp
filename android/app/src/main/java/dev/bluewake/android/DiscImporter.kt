@@ -46,6 +46,8 @@ class DiscImporter(private val resolver: ContentResolver, private val paths: Dat
                     var copied = 0L
                     var lastReport = 0L
                     while (true) {
+                        // The screen was closed: stop, and the partial copy goes (below).
+                        if (Thread.currentThread().isInterrupted) throw IOException("cancelled")
                         val n = input.read(buffer)
                         if (n < 0) break
                         out.write(buffer, 0, n)

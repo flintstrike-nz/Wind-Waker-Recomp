@@ -12,12 +12,12 @@ plugins {
 val jniLibsDir = providers.gradleProperty("bluewakeJniLibs")
     .orElse(layout.projectDirectory.dir("libs").asFile.absolutePath)
 
-// Signing. A release build is signed with the keystore given by
-// -Pbluewake.keystore=FILE -Pbluewake.keystorePassword=... (alias "bluewake");
-// scripts/android/build.sh creates a private one on first use. Without it the
-// release APK is left unsigned.
-val keystorePath = providers.gradleProperty("bluewake.keystore").orNull
-val keystorePassword = providers.gradleProperty("bluewake.keystorePassword").orNull
+// Signing. A release build is signed with the keystore given by -PbluewakeKeystore=FILE
+// and the password in the environment, ORG_GRADLE_PROJECT_bluewakeKeystorePassword (alias
+// "bluewake"; never on a command line). scripts/android/build.sh creates a private
+// keystore on first use. Without them the release APK is left unsigned.
+val keystorePath = providers.gradleProperty("bluewakeKeystore").orNull
+val keystorePassword = providers.gradleProperty("bluewakeKeystorePassword").orNull
 
 android {
     namespace = "dev.bluewake.android"
