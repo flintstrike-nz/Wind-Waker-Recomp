@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 
 /** One of the Wind Waker save's three quest logs, as the shared importer describes it. */
 class QuestLog(val empty: Boolean, val checksumOk: Boolean, val maxLife: Int, val rupees: Int, val name: String) {
@@ -42,7 +43,15 @@ class DolphinSaveImport(
         val cardHasSaves get() = here.isNotEmpty()
     }
 
-    private val staged get() = File(cacheDir, "dolphin-import.tmp")
+    // Everything this object makes is named with its own token, and it only ever removes what carries
+    // it: an earlier screen's worker that outlives its screen must not touch the files of the next one.
+    private val owner = UUID.randomUUID().toString().take(8)
+    private val stagedDir get() = File(cacheDir, "dolphin-import").also { it.mkdirs() }
+    private val resultPrefix get() = paths.card.name + ".import-"
+    private var counter = 0
+
+    private fun newStaged(): File = File(stagedDir, "$owner-${synchronized(this) { counter++ }}.tmp")
+    private fun resultFor(staged: File) = File(paths.card.parentFile, resultPrefix + staged.name)
 
     /** Copies the picked file (at most 32 MB: a raw Dolphin card is about 16) and reads it. Throws IOException with a sentence. */
     fun inspect(source: Uri, displayName: String): Inspection {
@@ -50,7 +59,7 @@ class DolphinSaveImport(
         if (!paths.card.isFile)
             throw IOException("BlueWake makes its memory card when the game starts. Start the game once, " +
                 "save, and then try again.")
-        val file = staged
+        val file = newStaged()
         try {
             resolver.openInputStream(source)?.use { input ->
                 file.outputStream().use { out ->
@@ -83,7 +92,7 @@ class DolphinSaveImport(
      * success, else a sentence for the player. The staged file is removed either way.
      */
     fun import(inspection: Inspection, src: Int, dst: Int): String? {
-        val result = File(paths.card.path + ".import")
+        val result = resultFor(inspection.file)
         try {
             DiscNative.nativeDolphinImport(inspection.file.absolutePath, paths.card.absolutePath, src, dst,
                 result.absolutePath)?.let { return it }
@@ -101,16 +110,25 @@ class DolphinSaveImport(
     }
 
     /**
-     * Removes whatever an import left in the cache: the staged copy of the picked file and a half-made
-     * result. For when the screen goes away with an import in flight, or came back after the process
-     * was killed in one; an inspection that was never handed to the UI cannot be found to [discard].
+     * Removes what this object left behind: the staged copies of picked files and half-made results.
+     * For when the screen goes away with an import in flight; an inspection that was never handed to
+     * the UI cannot be found to [discard]. Files of other objects are not touched.
      */
-    fun discardStaged() {
-        staged.delete()
-        File(paths.card.path + ".import").delete()
+    fun discardOwn() {
+        stagedDir.listFiles { f -> f.name.startsWith("$owner-") }?.forEach { it.delete() }
+        paths.card.parentFile?.listFiles { f -> f.name.startsWith(resultPrefix + owner + "-") }?.forEach { it.delete() }
+    }
+
+    /** Removes what a run that was killed in the middle of an import left, once it is surely nobody's. */
+    fun discardStale() {
+        val cutoff = System.currentTimeMillis() - STALE_MS
+        stagedDir.listFiles { f -> f.lastModified() < cutoff }?.forEach { it.delete() }
+        paths.card.parentFile?.listFiles { f -> f.name.startsWith(resultPrefix) && f.lastModified() < cutoff }
+            ?.forEach { it.delete() }
     }
 
     companion object {
         private const val MAX_FILE_BYTES = 32L shl 20
+        private const val STALE_MS = 60L * 60 * 1000
     }
 }
