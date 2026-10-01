@@ -354,8 +354,9 @@ module_name=libgGZLE01_recomp.so
 # --start-at apk can never package libraries made from other inputs than the ones the provenance
 # describes.
 profile_hash() { if [ -n "$1" ]; then sha256_of "$1"; else echo none; fi; }
-tree_state() {  # the commit plus any uncommitted change under the given paths
-    { git rev-parse HEAD; git diff HEAD -- "$@"; } | shasum -a 256 | awk '{print $1}'
+tree_state() {  # the committed content of the given paths (not the commit: an unrelated commit must not
+                # force a rebuild) plus any uncommitted change under them
+    { for path in "$@"; do git rev-parse "HEAD:$path"; done; git diff HEAD -- "$@"; } | shasum -a 256 | awk '{print $1}'
 }
 patches_sha=$(cat "$root"/patches/android/recompcore/*.patch | shasum -a 256 | awk '{print $1}')
 composite_inputs() {

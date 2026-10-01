@@ -1,3 +1,22 @@
+## 2026-10-01 Dolphin save import on Android (checked with synthetic saves, not a real Dolphin export)
+
+The launcher's **Import a Dolphin save…** uses the iOS app's importer (`apple/ios/src/dolphin_save_import.c`),
+now also linked into `libbwdisc.so` with three JNI entry points (`nativeDolphinQuestLogs`,
+`nativeCardQuestLogs`, `nativeDolphinImport` in `android/native/src/disc_jni.c`). The flow is the iOS one:
+pick a .gci or raw card (32 MB cap, copied off the main thread), choose a quest log (a damaged one is not
+offered), choose the BlueWake quest log it replaces (or, with no saves on the card yet, the whole file is
+added), confirm; the result is checked as a sound container, the current card is copied to Backups, and the
+new one is swapped in atomically. It needs BlueWake's card to exist, as on iOS.
+
+Checked: 15 assertions from a JVM (JDK 21) against the library built for Linux, with a synthetic
+.gci, a second .gci with a damaged quest log, a raw 64-block Dolphin card and an empty BlueWake container:
+listing, import into a card with no saves, import into a chosen slot (the other slots unchanged), the
+result passing the container check, refusal of a bad file, a missing file, slot 0 and a damaged quest log.
+The arm64 library inside the signed APK exports the entry points; the Kotlin builds. Not checked: a real Dolphin
+export, and the dialogs on a device. Also fixed: `build.sh`'s recorded-inputs check hashed the commit, so any
+unrelated commit would have forced the game module to be recompiled; it now hashes the content of the paths
+each library depends on.
+
 ## 2026-10-01 An Android port: built and packaged, never run (target: the Oppo Find N3's inner screen)
 
 `android/` (the Kotlin app and `android/native`, the host's CMake for the NDK), `scripts/android/build.sh`

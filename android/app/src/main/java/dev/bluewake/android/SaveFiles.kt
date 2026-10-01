@@ -71,6 +71,22 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
             if (DiscNative.available()) {
                 DiscNative.nativeCardCheck(staged.absolutePath)?.let { return it }
             }
+            return swapIn(staged)
+        } catch (e: IOException) {
+            return "Your saves were not changed. ${e.message}"
+        } finally {
+            // Whatever happened, no staged copy is left behind (after a rename there is none).
+            staged.delete()
+        }
+    }
+
+    /**
+     * Puts a card file in place of the current one, after keeping a copy of the current one in Backups.
+     * [staged] is used up either way. Null on success, else a sentence for the player; the card is
+     * unchanged when it fails.
+     */
+    fun swapIn(staged: File): String? {
+        try {
             if (paths.card.isFile) {
                 paths.backups.mkdirs()
                 val backup = File(paths.backups, "GZLE01-${stamp("yyyyMMdd-HHmmss")}.card")
@@ -81,7 +97,6 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
         } catch (e: IOException) {
             return "Your saves were not changed. ${e.message}"
         } finally {
-            // Whatever happened, no staged copy is left behind (after a rename there is none).
             staged.delete()
         }
     }
