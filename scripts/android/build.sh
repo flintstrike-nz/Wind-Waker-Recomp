@@ -367,13 +367,13 @@ composite_inputs() {
         "recompcore=$RECOMPCORE_SHA" "patches=$patches_sha" \
         "composite_digest=$(cat "$out/composite-final.digest" 2>/dev/null || cat "$out/composite-src.digest" 2>/dev/null || echo none)" \
         "profile=$(profile_hash "$composite_pgo")" \
-        "source=$(tree_state cmake/composite scripts/generate_composite.py scripts/mods mods)"
+        "source=$(tree_state cmake/composite scripts/generate_composite.py scripts/mods mods scripts/android scripts/builder)"
 }
 host_inputs() {
     printf '%s\n' "ndk=${ndk_revision:-unknown}" "cpu=$cpu_flags" \
         "recompcore=$RECOMPCORE_SHA" "dawn=$DAWN_ANDROID_SHA256" "patches=$patches_sha" \
         "profile=$(profile_hash "$host_pgo")" \
-        "source=$(tree_state android/native runtime/host/src apple/ios/src)"
+        "source=$(tree_state android/native runtime/host/src apple/ios/src scripts/android scripts/builder)"
 }
 
 if should_run composite; then

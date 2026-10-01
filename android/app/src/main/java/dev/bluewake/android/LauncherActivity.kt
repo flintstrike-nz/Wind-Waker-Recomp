@@ -96,6 +96,8 @@ class LauncherActivity : ComponentActivity() {
         paths = DataPaths(this)
         saves = SaveFiles(contentResolver, paths)
         setContentView(buildContent())
+        // What a previous run left behind (the process was killed during an import).
+        worker.execute { dolphin.discardStaged() }
         refresh()
         recountTextures()
     }
@@ -123,6 +125,8 @@ class LauncherActivity : ComponentActivity() {
             } catch (t: Throwable) {
                 Runnable { message("Something went wrong", t.message ?: t.javaClass.simpleName) }
             }
+            // The screen went away while this ran: nobody is left to ask about the staged save.
+            if (destroyed) dolphin.discardStaged()
             post {
                 busy = false
                 progress.isIndeterminate = false
@@ -145,6 +149,9 @@ class LauncherActivity : ComponentActivity() {
         pendingInspection?.let { dolphin.discard(it) }
         ui.removeCallbacksAndMessages(null)
         worker.shutdownNow()
+        // Whatever the handoff between the worker and the UI dropped (an inspection read but never
+        // shown, an import queued but never started) is in the cache under one name.
+        dolphin.discardStaged()
         super.onDestroy()
     }
 

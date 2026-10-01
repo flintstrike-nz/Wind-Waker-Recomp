@@ -100,6 +100,16 @@ class DolphinSaveImport(
         inspection.file.delete()
     }
 
+    /**
+     * Removes whatever an import left in the cache: the staged copy of the picked file and a half-made
+     * result. For when the screen goes away with an import in flight, or came back after the process
+     * was killed in one; an inspection that was never handed to the UI cannot be found to [discard].
+     */
+    fun discardStaged() {
+        staged.delete()
+        File(paths.card.path + ".import").delete()
+    }
+
     companion object {
         private const val MAX_FILE_BYTES = 32L shl 20
     }
