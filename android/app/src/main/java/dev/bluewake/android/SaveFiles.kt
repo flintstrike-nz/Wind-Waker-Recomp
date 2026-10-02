@@ -71,13 +71,7 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
             if (DiscNative.available()) {
                 DiscNative.nativeCardCheck(staged.absolutePath)?.let { return it }
             }
-            if (paths.card.isFile) {
-                paths.backups.mkdirs()
-                val backup = File(paths.backups, "GZLE01-${stamp("yyyyMMdd-HHmmss")}.card")
-                paths.card.copyTo(backup, overwrite = true)
-            }
-            if (!staged.renameTo(paths.card)) return "The save file could not be put in place."
-            return null
+            return swapIn(staged)
         } catch (e: IOException) {
             return "Your saves were not changed. ${e.message}"
         } finally {
@@ -85,6 +79,48 @@ class SaveFiles(private val resolver: ContentResolver, private val paths: DataPa
             staged.delete()
         }
     }
+
+    /**
+     * Puts a card file in place of the current one, after keeping a copy of the current one in Backups.
+     * [staged] is used up either way. Null on success, else a sentence for the player; the card is
+     * unchanged when it fails.
+     */
+    fun swapIn(staged: File): String? {
+        try {
+            backUpCard()
+            return replaceCard(staged)
+        } catch (e: IOException) {
+            return "Your saves were not changed. ${e.message}"
+        } finally {
+            staged.delete()
+        }
+    }
+
+    /** Copies the current card into Backups (the slow part of a swap); null when there is no card yet. */
+    @Throws(IOException::class)
+    fun backUpCard(): File? {
+        if (!paths.card.isFile) return null
+        paths.backups.mkdirs()
+        // The name is reserved atomically, so two backups in the same second never share a file and a
+        // caller that removes its own backup can never remove somebody else's.
+        val stem = "GZLE01-${stamp("yyyyMMdd-HHmmss")}"
+        var backup = File(paths.backups, "$stem.card")
+        var n = 1
+        while (!backup.createNewFile()) backup = File(paths.backups, "$stem-${n++}.card")
+        try {
+            // Through streams into the reserved file: File.copyTo(overwrite = true) unlinks the destination
+            // first, which would give the name up for another operation to reserve.
+            paths.card.inputStream().use { input -> backup.outputStream().use { input.copyTo(it) } }
+        } catch (e: IOException) {
+            backup.delete()
+            throw e
+        }
+        return backup
+    }
+
+    /** The instant half of a swap: renames [staged] over the card. Null on success, else a sentence. */
+    fun replaceCard(staged: File): String? =
+        if (staged.renameTo(paths.card)) null else "The save file could not be put in place."
 
     private fun stamp(pattern: String) = SimpleDateFormat(pattern, Locale.US).format(Date())
 }

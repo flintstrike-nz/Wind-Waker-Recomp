@@ -131,9 +131,17 @@ The in-game menu (the ⋯ button, back, or a controller's Select) holds the sett
   you pick), Better Wind Waker and its settings. They apply the next time the game starts; the module reads
   them once, at boot.
 - **Game data and saves:** back up the memory card to a file you choose, and share the session log. To
-  restore saves or remove the disc image, use the launcher screen (the game must not be running).
+  restore or import saves, or remove the disc image, use the launcher screen (the game must not be running).
 
-Importing Dolphin saves, which the iOS app does, is not in the Android app yet.
+**Bringing your Dolphin saves.** Export the save from Dolphin (**Tools › Memory Card Manager › Export**, a
+`.gci`, or use the memory card's `.raw` file), copy it to the device, and on the launcher screen choose
+**Import a Dolphin save…**. The app lists the file's quest logs (name, hearts, rupees; a damaged one is
+left out), you pick one and the BlueWake quest log it replaces, and it is copied in with its checksums
+recomputed. Your current saves are first copied to the app's `Backups` folder (the import is cancelled, and
+nothing is left behind, if you back out or leave the screen). The game must not be running,
+and BlueWake needs a memory card of its own, which the game makes the first time it starts: start it once
+and save before importing. USA saves only. It is the iOS app's importer (`dolphin_save_import.c`), checked
+here with synthetic saves through a JVM, not yet with a real Dolphin export.
 
 ## Where things live
 

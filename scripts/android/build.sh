@@ -354,8 +354,14 @@ module_name=libgGZLE01_recomp.so
 # --start-at apk can never package libraries made from other inputs than the ones the provenance
 # describes.
 profile_hash() { if [ -n "$1" ]; then sha256_of "$1"; else echo none; fi; }
-tree_state() {  # the commit plus any uncommitted change under the given paths
-    { git rev-parse HEAD; git diff HEAD -- "$@"; } | shasum -a 256 | awk '{print $1}'
+tree_state() {  # the content of the tracked files under the given paths, as they are on disk now: the
+                # same whether or not they are committed, and not the commit itself (an unrelated
+                # commit must not force a rebuild)
+    git ls-files -z -- "$@" | while IFS= read -r -d '' file; do
+        # a file deleted on disk but still tracked is skipped, so committing the deletion changes nothing
+        [ -f "$file" ] && printf '%s  %s\n' "$(sha256_of "$file")" "$file"
+        true
+    done | shasum -a 256 | awk '{print $1}'
 }
 patches_sha=$(cat "$root"/patches/android/recompcore/*.patch | shasum -a 256 | awk '{print $1}')
 composite_inputs() {
@@ -363,13 +369,13 @@ composite_inputs() {
         "recompcore=$RECOMPCORE_SHA" "patches=$patches_sha" \
         "composite_digest=$(cat "$out/composite-final.digest" 2>/dev/null || cat "$out/composite-src.digest" 2>/dev/null || echo none)" \
         "profile=$(profile_hash "$composite_pgo")" \
-        "source=$(tree_state cmake/composite scripts/generate_composite.py scripts/mods mods)"
+        "source=$(tree_state cmake/composite scripts/generate_composite.py scripts/mods mods scripts/android scripts/builder)"
 }
 host_inputs() {
     printf '%s\n' "ndk=${ndk_revision:-unknown}" "cpu=$cpu_flags" \
         "recompcore=$RECOMPCORE_SHA" "dawn=$DAWN_ANDROID_SHA256" "patches=$patches_sha" \
         "profile=$(profile_hash "$host_pgo")" \
-        "source=$(tree_state android/native runtime/host/src apple/ios/src)"
+        "source=$(tree_state android/native runtime/host/src apple/ios/src scripts/android scripts/builder)"
 }
 
 if should_run composite; then

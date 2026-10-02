@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -22,6 +23,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.io.IOException
 import java.util.concurrent.Executors
 
 /**
@@ -50,6 +52,7 @@ class LauncherActivity : ComponentActivity() {
     private lateinit var backUp: Button
     private lateinit var restore: Button
     private lateinit var remove: Button
+    private lateinit var importDolphin: Button
     private lateinit var installPack: Button
     private lateinit var removePack: Button
     private lateinit var packNote: TextView
@@ -75,6 +78,9 @@ class LauncherActivity : ComponentActivity() {
             }
         }
     }
+    private val pickDolphinSave = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) beginDolphinImport(uri)
+    }
     private val pickRestoreSource = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) confirmRestore(uri)
     }
@@ -90,6 +96,8 @@ class LauncherActivity : ComponentActivity() {
         paths = DataPaths(this)
         saves = SaveFiles(contentResolver, paths)
         setContentView(buildContent())
+        // What a previous run left behind (the process was killed during an import).
+        worker.execute { dolphin.discardStale() }
         refresh()
         recountTextures()
     }
@@ -111,7 +119,14 @@ class LauncherActivity : ComponentActivity() {
         status.text = what
         refresh()
         worker.execute {
-            val after = work()
+            // Whatever goes wrong in the work must not leave the screen busy for good.
+            val after = try {
+                work()
+            } catch (t: Throwable) {
+                Runnable { message("Something went wrong", t.message ?: t.javaClass.simpleName) }
+            }
+            // The screen went away while this ran: nobody is left to ask about the staged save.
+            if (destroyed) dolphin.discardOwn()
             post {
                 busy = false
                 progress.isIndeterminate = false
@@ -131,8 +146,12 @@ class LauncherActivity : ComponentActivity() {
         // Work in flight must not touch this destroyed activity: drop what was posted, and
         // interrupt the worker (the disc copy notices and removes its partial file).
         destroyed = true
+        pendingInspection?.let { dolphin.discard(it) }
         ui.removeCallbacksAndMessages(null)
         worker.shutdownNow()
+        // An import still running must not commit to a card that is no longer this screen's to change,
+        // and whatever the handoff dropped (an inspection never shown, an import never started) goes.
+        dolphin.cancel()
         super.onDestroy()
     }
 
@@ -164,6 +183,7 @@ class LauncherActivity : ComponentActivity() {
         play.isEnabled = !busy && paths.ready()
         backUp.isEnabled = !busy && saves.hasCard()
         restore.isEnabled = !busy
+        importDolphin.isEnabled = !busy
         remove.isEnabled = !busy && (disc || prepared)
         val textures = textureCount
         installPack.isEnabled = !busy
@@ -252,6 +272,93 @@ class LauncherActivity : ComponentActivity() {
                 runBusy("Removing the textures…") {
                     TexturePack(contentResolver, paths).remove()
                     Runnable { recountTextures() }
+                }
+            }
+            .show()
+    }
+
+    // ---------------------------------------------------------------- Dolphin saves
+
+    private val dolphin by lazy { DolphinSaveImport(contentResolver, paths, saves, cacheDir) }
+    private var pendingInspection: DolphinSaveImport.Inspection? = null
+
+    private fun displayName(uri: Uri): String =
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        } ?: "the chosen file"
+
+    /** Reads the picked .gci or raw card off the main thread, then asks which quest log to take. */
+    private fun beginDolphinImport(uri: Uri) {
+        runBusy("Reading the save…") {
+            try {
+                val name = displayName(uri)  // a document provider can be slow: not on the main thread
+                val inspection = dolphin.inspect(uri, name)
+                Runnable { chooseQuestLog(inspection) }
+            } catch (e: IOException) {
+                Runnable { message("Could not import", e.message ?: "The save could not be read.") }
+            }
+        }
+    }
+
+    private fun forget(inspection: DolphinSaveImport.Inspection) {
+        dolphin.discard(inspection)
+        if (pendingInspection === inspection) pendingInspection = null
+    }
+
+    private fun chooseQuestLog(inspection: DolphinSaveImport.Inspection) {
+        val usable = (0..2).filter { !inspection.theirs[it].empty && inspection.theirs[it].checksumOk }
+        if (usable.isEmpty()) {
+            forget(inspection)
+            message("Nothing to import", "This Dolphin save has no quest logs BlueWake can read.")
+            return
+        }
+        pendingInspection = inspection
+        AlertDialog.Builder(this)
+            .setTitle("Import which quest log?\n${inspection.name}")
+            .setItems(usable.map { inspection.theirs[it].summary() }.toTypedArray()) { _, which ->
+                val source = usable[which] + 1
+                // With no saves on BlueWake's card yet, the whole Dolphin file is added.
+                if (!inspection.cardHasSaves) confirmImport(inspection, source, 1, null)
+                else chooseDestination(inspection, source)
+            }
+            .setNegativeButton("Cancel") { _, _ -> forget(inspection) }
+            .setOnCancelListener { forget(inspection) }
+            .show()
+    }
+
+    private fun chooseDestination(inspection: DolphinSaveImport.Inspection, source: Int) {
+        val taken = inspection.here.map { if (it.empty) null else it.summary() }
+        AlertDialog.Builder(this)
+            .setTitle("Put it in which quest log?")
+            .setItems(taken.mapIndexed { i, there -> "Quest log ${i + 1}: ${there ?: "Empty"}" }.toTypedArray()) { _, which ->
+                confirmImport(inspection, source, which + 1, taken[which])
+            }
+            .setNegativeButton("Cancel") { _, _ -> forget(inspection) }
+            .setOnCancelListener { forget(inspection) }
+            .show()
+    }
+
+    private fun confirmImport(inspection: DolphinSaveImport.Inspection, source: Int, destination: Int, replacing: String?) {
+        val summary = inspection.theirs[source - 1].summary()
+        val what = when {
+            !inspection.cardHasSaves -> "BlueWake has no saves yet, so all quest logs in ${inspection.name} are copied in."
+            replacing != null -> "Quest log $destination ($replacing) will be replaced by $summary from ${inspection.name}."
+            else -> "$summary from ${inspection.name} goes into quest log $destination."
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (replacing != null) "Replace quest log $destination?" else "Import save?")
+            .setMessage("$what A copy of your current saves is kept in the app's Backups folder.\n\n" +
+                "It loads the next time you start the game.")
+            .setNegativeButton("Cancel") { _, _ -> forget(inspection) }
+            .setOnCancelListener { forget(inspection) }
+            .setPositiveButton(if (replacing != null) "Replace quest log $destination" else "Import") { _, _ ->
+                pendingInspection = null
+                runBusy("Importing the save…") {
+                    val problem = dolphin.import(inspection, source, destination)
+                    Runnable {
+                        message(if (problem == null) "Save imported" else "Saves not changed",
+                            problem ?: "Start the game and pick the quest log to play.")
+                    }
                 }
             }
             .show()
@@ -355,6 +462,7 @@ class LauncherActivity : ComponentActivity() {
         play = button("Play", true) { startGame() }
         backUp = button("Back up saves…", false) { pickBackupTarget.launch(saves.suggestedBackupName()) }
         restore = button("Restore saves…", false) { pickRestoreSource.launch(arrayOf("*/*")) }
+        importDolphin = button("Import a Dolphin save…", false) { pickDolphinSave.launch(arrayOf("*/*")) }
         remove = button("Remove disc image and game files…", false) { confirmRemove() }
         val spacing = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12f).toInt() }
@@ -367,6 +475,7 @@ class LauncherActivity : ComponentActivity() {
         })
         column.addView(backUp, spacing)
         column.addView(restore, spacing)
+        column.addView(importDolphin, spacing)
         column.addView(remove, spacing)
         installPack = button("Install an HD texture pack…", false) { pickTexturePack.launch(null) }
         removePack = button("Remove the texture pack…", false) { confirmRemovePack() }

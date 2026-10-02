@@ -1,0 +1,163 @@
+package dev.bluewake.android
+
+import android.content.ContentResolver
+import android.net.Uri
+import java.io.File
+import java.io.IOException
+import java.util.UUID
+
+/** One of the Wind Waker save's three quest logs, as the shared importer describes it. */
+class QuestLog(val empty: Boolean, val checksumOk: Boolean, val maxLife: Int, val rupees: Int, val name: String) {
+    /** "Link · 6¾ hearts · 180 rupees". */
+    fun summary(): String {
+        val quarters = arrayOf("", "¼", "½", "¾")
+        val hearts = "${maxLife / 4}${quarters[maxLife % 4]} heart${if (maxLife == 4) "" else "s"}"
+        return "${name.ifEmpty { "No name" }} · $hearts · $rupees rupee${if (rupees == 1) "" else "s"}"
+    }
+
+    companion object {
+        /** From the native "empty;checksumOk;maxLife;rupees;name". */
+        fun parse(text: String): QuestLog {
+            val p = text.split(';', limit = 5)
+            return QuestLog(p.getOrNull(0) == "1", p.getOrNull(1) == "1", p.getOrNull(2)?.toIntOrNull() ?: 0,
+                p.getOrNull(3)?.toIntOrNull() ?: 0, p.getOrNull(4) ?: "")
+        }
+    }
+}
+
+/**
+ * Importing a save made by Dolphin (a .gci from Memory Card Manager › Export, or a raw memory card image)
+ * into BlueWake's card: the player picks one of its quest logs and the quest log of BlueWake's it replaces.
+ * The parsing, the checksums and the card edit are the shared C importer the iOS app uses
+ * (apple/ios/src/dolphin_save_import.c); this is the Android side of the flow. Done from the launcher,
+ * never while the game runs: the running game keeps its card in memory and writes all of it on its next save.
+ */
+class DolphinSaveImport(
+    private val resolver: ContentResolver,
+    private val paths: DataPaths,
+    private val saves: SaveFiles,
+    private val cacheDir: File,
+) {
+    /** What was found in the picked file and on BlueWake's card. [here] is empty when the card has no saves. */
+    class Inspection(val file: File, val name: String, val theirs: List<QuestLog>, val here: List<QuestLog>) {
+        val cardHasSaves get() = here.isNotEmpty()
+    }
+
+    // Everything this object makes is named with its own token, and it only ever removes what carries
+    // it: an earlier screen's worker that outlives its screen must not touch the files of the next one.
+    private val owner = UUID.randomUUID().toString().take(8)
+    private val stagedDir get() = File(cacheDir, "dolphin-import").also { it.mkdirs() }
+    private val resultPrefix get() = paths.card.name + ".import-"
+    private var counter = 0
+
+    // An import whose screen is gone must not commit: the card may belong to a newer screen or the game by
+    // then. The flag is set and tested under the same lock the final rename runs under, so an import
+    // either commits before [cancel] returns or never does.
+    private val commitLock = Any()
+    private var cancelled = false
+
+    private fun newStaged(): File = File(stagedDir, "$owner-${synchronized(this) { counter++ }}.tmp")
+    private fun resultFor(staged: File) = File(paths.card.parentFile, resultPrefix + staged.name)
+
+    /** Copies the picked file (at most 32 MB: a raw Dolphin card is about 16) and reads it. Throws IOException with a sentence. */
+    fun inspect(source: Uri, displayName: String): Inspection {
+        if (!DiscNative.available()) throw IOException("This build has no native libraries, so it cannot read a save.")
+        if (!paths.card.isFile)
+            throw IOException("BlueWake makes its memory card when the game starts. Start the game once, " +
+                "save, and then try again.")
+        val file = newStaged()
+        var inspected = false
+        try {
+            resolver.openInputStream(source)?.use { input ->
+                file.outputStream().use { out ->
+                    val buffer = ByteArray(1 shl 16)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        total += n
+                        if (total > MAX_FILE_BYTES) throw IOException("That file is too large to be a Dolphin save.")
+                        out.write(buffer, 0, n)
+                    }
+                }
+            } ?: throw IOException("The file could not be opened.")
+            val theirs = DiscNative.nativeDolphinQuestLogs(file.absolutePath)
+            if (theirs[0].isNotEmpty()) throw IOException(theirs[0])
+            val card = DiscNative.nativeCardQuestLogs(paths.card.absolutePath)
+            if (card[0].isNotEmpty()) throw IOException(card[0])
+            val found = Inspection(file, displayName, (1..3).map { QuestLog.parse(theirs[it]) },
+                if (card[1] == "1") (2..4).map { QuestLog.parse(card[it]) } else emptyList())
+            inspected = true
+            return found
+        } finally {
+            // Whatever went wrong (a read, the native parser), no staged copy outlives the failure.
+            if (!inspected) file.delete()
+        }
+    }
+
+    /**
+     * Puts quest log [src] (1-3) of the inspected file into [dst] (1-3) of BlueWake's card, which is read
+     * again here in case the game saved meanwhile; a copy of the current card is kept in Backups. Null on
+     * success, else a sentence for the player. The staged file is removed either way.
+     */
+    fun import(inspection: Inspection, src: Int, dst: Int): String? {
+        val result = resultFor(inspection.file)
+        try {
+            if (cancelled) return "The import was cancelled."
+            DiscNative.nativeDolphinImport(inspection.file.absolutePath, paths.card.absolutePath, src, dst,
+                result.absolutePath)?.let { return it }
+            // The result must be a sound container before it replaces anything.
+            DiscNative.nativeCardCheck(result.absolutePath)?.let { return it }
+            // The slow part, the copy of the current card into Backups, is done before the lock is taken so
+            // that a screen being destroyed never waits for it; only the check and the rename are inside.
+            val backup = try {
+                saves.backUpCard()
+            } catch (e: IOException) {
+                return "Your saves were not changed. ${e.message}"
+            }
+            synchronized(commitLock) {
+                if (cancelled) {
+                    backup?.delete()
+                    return "The import was cancelled."
+                }
+                return saves.replaceCard(result)
+            }
+        } finally {
+            result.delete()
+            discard(inspection)
+        }
+    }
+
+    fun discard(inspection: Inspection) {
+        inspection.file.delete()
+    }
+
+    /** The screen is going away: no import of this object commits from here on, and its files are removed. */
+    fun cancel() {
+        synchronized(commitLock) { cancelled = true }
+        discardOwn()
+    }
+
+    /**
+     * Removes what this object left behind: the staged copies of picked files and half-made results.
+     * For when the screen goes away with an import in flight; an inspection that was never handed to
+     * the UI cannot be found to [discard]. Files of other objects are not touched.
+     */
+    fun discardOwn() {
+        stagedDir.listFiles { f -> f.name.startsWith("$owner-") }?.forEach { it.delete() }
+        paths.card.parentFile?.listFiles { f -> f.name.startsWith(resultPrefix + owner + "-") }?.forEach { it.delete() }
+    }
+
+    /** Removes what a run that was killed in the middle of an import left, once it is surely nobody's. */
+    fun discardStale() {
+        val cutoff = System.currentTimeMillis() - STALE_MS
+        stagedDir.listFiles { f -> f.lastModified() < cutoff }?.forEach { it.delete() }
+        paths.card.parentFile?.listFiles { f -> f.name.startsWith(resultPrefix) && f.lastModified() < cutoff }
+            ?.forEach { it.delete() }
+    }
+
+    companion object {
+        private const val MAX_FILE_BYTES = 32L shl 20
+        private const val STALE_MS = 60L * 60 * 1000
+    }
+}
