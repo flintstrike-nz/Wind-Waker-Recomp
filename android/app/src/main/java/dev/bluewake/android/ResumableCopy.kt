@@ -12,6 +12,9 @@ import java.io.OutputStream
  * retried; a failed write to our own storage is a real error and is thrown at once.
  */
 object ResumableCopy {
+    /** The thread was interrupted (the screen closed): ends the copy at once and is never retried. */
+    private class Cancelled : IOException("cancelled")
+
     /**
      * Copies [first] to [out] until the end and returns the number of source bytes consumed, [startAt]
      * included ([first] is already [startAt] bytes in). [reopen] gives a new stream at the start of the
@@ -35,7 +38,7 @@ object ResumableCopy {
         val buffer = ByteArray(1 shl 20)
         try {
             while (true) {
-                if (Thread.currentThread().isInterrupted) throw IOException("cancelled")
+                if (Thread.currentThread().isInterrupted) throw Cancelled()
                 val n = try {
                     val stream = input ?: reopenAt(reopen, copied)
                     input = stream
@@ -43,12 +46,13 @@ object ResumableCopy {
                 } catch (e: IOException) {
                     input.closeQuietly()
                     input = null
+                    if (e is Cancelled) throw e
                     if (++failures > retries) throw IOException("${e.message} (after ${copied shr 20} MB)", e)
                     try {
                         Thread.sleep(retryPauseMs * failures)
                     } catch (_: InterruptedException) {
                         Thread.currentThread().interrupt()
-                        throw IOException("cancelled")
+                        throw Cancelled()
                     }
                     continue
                 }
@@ -69,6 +73,8 @@ object ResumableCopy {
             var left = offset
             var discard: ByteArray? = null
             while (left > 0) {
+                // Re-reading the offset of a stream that cannot skip takes a while: stay interruptible.
+                if (Thread.currentThread().isInterrupted) throw Cancelled()
                 val skipped = stream.skip(left)
                 if (skipped > 0) {
                     left -= skipped
