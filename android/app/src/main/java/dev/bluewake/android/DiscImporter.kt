@@ -46,10 +46,10 @@ class DiscImporter(private val resolver: ContentResolver, private val paths: Dat
                     return Result.Failed("There is not enough free storage: the disc image needs about " +
                         "${need shr 20} MB and ${free shr 20} MB are free.")
                 listener.onProgress(0.0, "Copying the disc image")
-                handedOver = true
                 val copied = part.outputStream().buffered(1 shl 20).use { out ->
                     out.write(header)
                     var lastReport = 0L
+                    handedOver = true  // ResumableCopy closes the source from here on, whatever happens
                     // A provider that breaks part-way is opened again where it stopped.
                     ResumableCopy.copy(source.input, { open(uri)?.input }, out, startAt = header.size.toLong()) { done ->
                         if (total > 0 && done - lastReport >= (8 shl 20)) {

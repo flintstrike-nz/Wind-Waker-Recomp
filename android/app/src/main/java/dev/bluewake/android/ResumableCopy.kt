@@ -15,8 +15,9 @@ object ResumableCopy {
     /**
      * Copies [first] to [out] until the end and returns the number of source bytes consumed, [startAt]
      * included ([first] is already [startAt] bytes in). [reopen] gives a new stream at the start of the
-     * source, or null when it cannot be opened. After [retries] read errors in a row without progress
-     * the last error is thrown, saying how far the copy got. Closes whatever stream it ends with,
+     * source, or null when it cannot be opened. [retries] is the number of times the source is opened
+     * again after a read error without progress in between: the error after the last of them (the
+     * [retries]+1st in a row) is thrown, saying how far the copy got. Closes whatever stream it ends with,
      * [first] included. An interrupted thread ends the copy with an IOException("cancelled").
      */
     fun copy(
@@ -66,14 +67,18 @@ object ResumableCopy {
         val stream = reopen() ?: throw IOException("The file could not be opened again")
         try {
             var left = offset
+            var discard: ByteArray? = null
             while (left > 0) {
                 val skipped = stream.skip(left)
                 if (skipped > 0) {
                     left -= skipped
                 } else {
-                    // skip() may return 0 without being at the end: read one byte to tell.
-                    if (stream.read() < 0) throw IOException("The file ended early when it was opened again")
-                    left--
+                    // A stream that cannot skip returns 0 (or may be at its end): read and discard a
+                    // buffer at a time, which also tells the end.
+                    val buffer = discard ?: ByteArray(1 shl 20).also { discard = it }
+                    val n = stream.read(buffer, 0, minOf(left, buffer.size.toLong()).toInt())
+                    if (n < 0) throw IOException("The file ended early when it was opened again")
+                    left -= n
                 }
             }
         } catch (e: IOException) {
