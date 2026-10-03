@@ -96,6 +96,16 @@ image, and the files prepared from it. **Choose disc image…** opens Android's 
 checks the disc and prepares `main.dol` and the game's 415 modules from it. Compressed images (RVZ, GCZ,
 WIA, CISO) are not accepted on Android yet; convert one to `.iso` with Dolphin first. Then **Play**.
 
+The disc is needed on the phone even though the app was built from it. The build uses the disc only to
+translate the game's *code*; the game's models, textures, music and text are read from the disc at run
+time, and an app must not carry them (a release never contains game files). So copy the `.iso` to the phone
+once (about 1.5 GB) and choose it here; the app keeps its own copy in private storage.
+
+If the copy stops with an error from the file picker's provider (for example "Cello error 2"),
+the app opens the file again where it stopped, up to three times. If it still fails, copy the `.iso` into
+the phone's `Download` folder with a cable or the file manager (not from a cloud drive or the SD card) and
+choose it from there.
+
 ## The Oppo Find N3's main screen
 
 The inner display is 7.82 inches, about 2440 × 2268 pixels: nearly square, 120 Hz. The game's picture is

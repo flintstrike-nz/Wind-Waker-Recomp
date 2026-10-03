@@ -25,40 +25,47 @@ class DiscImporter(private val resolver: ContentResolver, private val paths: Dat
     }
 
     /** Runs on the calling thread (call it off the main thread). */
-    fun import(source: Uri, listener: Listener): Result {
+    fun import(uri: Uri, listener: Listener): Result {
         if (!DiscNative.available())
             return Result.Failed("This build has no native libraries, so it cannot read a disc.")
         val part = paths.discPart
         try {
-            // Refuse the wrong file before copying 1.4 GB of it.
-            headerProblem(source)?.let { return Result.Failed(it) }
-            val total = sizeOf(source)
-            val free = StatFs(paths.data.absolutePath).availableBytes
-            val need = if (total > 0) total + (200L shl 20) else 1_700L shl 20
-            if (free < need)
-                return Result.Failed("There is not enough free storage: the disc image needs about " +
-                    "${need shr 20} MB and ${free shr 20} MB are free.")
-            listener.onProgress(0.0, "Copying the disc image")
-            resolver.openInputStream(source).use { input ->
-                if (input == null) return Result.Failed("The disc image could not be opened.")
-                part.outputStream().buffered(1 shl 20).use { out ->
-                    val buffer = ByteArray(1 shl 20)
-                    var copied = 0L
+            // One open serves the size, the header and the copy: some document providers fail on the
+            // second open of a large file, and the header was already read through the first.
+            val source = open(uri) ?: return Result.Failed("The disc image could not be opened.")
+            var handedOver = false
+            try {
+                val header = ByteArray(0x20)
+                val read = source.input.readUpTo(header)
+                // Refuse the wrong file before copying 1.4 GB of it.
+                headerProblem(header, read)?.let { return Result.Failed(it) }
+                val total = source.total
+                val free = StatFs(paths.data.absolutePath).availableBytes
+                val need = if (total > 0) total + (200L shl 20) else 1_700L shl 20
+                if (free < need)
+                    return Result.Failed("There is not enough free storage: the disc image needs about " +
+                        "${need shr 20} MB and ${free shr 20} MB are free.")
+                listener.onProgress(0.0, "Copying the disc image")
+                handedOver = true
+                val copied = part.outputStream().buffered(1 shl 20).use { out ->
+                    out.write(header)
                     var lastReport = 0L
-                    while (true) {
-                        // The screen was closed: stop, and the partial copy goes (below).
-                        if (Thread.currentThread().isInterrupted) throw IOException("cancelled")
-                        val n = input.read(buffer)
-                        if (n < 0) break
-                        out.write(buffer, 0, n)
-                        copied += n
-                        if (total > 0 && copied - lastReport >= (8 shl 20)) {
-                            lastReport = copied
+                    // A provider that breaks part-way is opened again where it stopped.
+                    ResumableCopy.copy(source.input, { open(uri)?.input }, out, startAt = header.size.toLong()) { done ->
+                        if (total > 0 && done - lastReport >= (8 shl 20)) {
+                            lastReport = done
                             // The copy is most of the wait; preparing the files is the rest.
-                            listener.onProgress(0.85 * copied / total, "Copying the disc image")
+                            listener.onProgress(0.85 * done / total, "Copying the disc image")
                         }
                     }
                 }
+                if (total > 0 && copied < total) {
+                    part.delete()
+                    return Result.Failed("The disc image ended early: ${copied shr 20} MB of ${total shr 20} MB " +
+                        "could be read. Copy the file to the phone again and choose it from there.")
+                }
+            } finally {
+                if (!handedOver) source.input.close()
             }
             listener.onProgress(0.85, "Checking the disc image")
             DiscNative.nativeCheck(part.absolutePath)?.let {
@@ -81,19 +88,32 @@ class DiscImporter(private val resolver: ContentResolver, private val paths: Dat
             return Result.Ok
         } catch (e: IOException) {
             part.delete()
-            return Result.Failed("The disc image could not be copied: ${e.message}. " +
-                "It needs about 1.5 GB of free storage.")
+            val why = (e.message ?: e.javaClass.simpleName).trimEnd('.', ' ')
+            return Result.Failed("The disc image could not be copied: $why." +
+                if (why.contains("space", ignoreCase = true)) " It needs about 1.5 GB of free storage."
+                else " If it keeps failing, copy the file into the phone's Download folder and choose it from there.")
         }
     }
 
-    /** A GameCube image starts with the game id "GZLE01" and has the GameCube magic at 0x1C. */
-    private fun headerProblem(uri: Uri): String? = try {
-        val header = ByteArray(0x20)
-        val read = resolver.openInputStream(uri)?.use { it.readUpTo(header) } ?: -1
+    private class Source(val total: Long, val input: InputStream)
+
+    /** Opens the picked file once for its length and its bytes; null when there is no such file. */
+    private fun open(uri: Uri): Source? {
+        try {
+            resolver.openAssetFileDescriptor(uri, "r")?.let { afd ->
+                return Source(afd.length.takeIf { it >= 0 } ?: -1L, afd.createInputStream())
+            }
+        } catch (_: Exception) {
+            // Fall through: openInputStream reports the provider's own error if there is one.
+        }
+        return resolver.openInputStream(uri)?.let { Source(-1L, it) }
+    }
+
+    /** A GameCube image starts with the game id "GZLE01" and has the GameCube magic at 0x1C. [read] bytes of [header] are valid. */
+    private fun headerProblem(header: ByteArray, read: Int): String? {
         val magic = ((header[0x1C].toInt() and 0xFF) shl 24) or ((header[0x1D].toInt() and 0xFF) shl 16) or
             ((header[0x1E].toInt() and 0xFF) shl 8) or (header[0x1F].toInt() and 0xFF)
-        when {
-            read < 0 -> "The disc image could not be opened."
+        return when {
             read < header.size || magic != 0xC2339F3D.toInt() ->
                 "That is not a GameCube disc image (an .iso or .gcm file). Compressed images " +
                     "(RVZ, GCZ, WIA, CISO) are not supported on Android yet."
@@ -101,8 +121,6 @@ class DiscImporter(private val resolver: ContentResolver, private val paths: Dat
                 "This is not The Wind Waker, USA (GZLE01). Only that version is supported."
             else -> null
         }
-    } catch (e: IOException) {
-        "The disc image could not be read: ${e.message}"
     }
 
     /** Reads until the buffer is full or the stream ends; the count read. (readNBytes needs Android 13.) */
@@ -114,11 +132,5 @@ class DiscImporter(private val resolver: ContentResolver, private val paths: Dat
             total += n
         }
         return total
-    }
-
-    private fun sizeOf(uri: Uri): Long = try {
-        resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-    } catch (_: Exception) {
-        -1L
     }
 }
